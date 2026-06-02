@@ -247,7 +247,7 @@ func runJob(cfg config.Config, path string) error {
 	}
 	r := &agent.Runner{
 		GitHub:            gh,
-		Git:               gitutil.Git{Workspace: cfg.WorkspaceDir, AuthorName: cfg.GitAuthorName, AuthorEmail: cfg.GitAuthorEmail},
+		Git:               gitutil.Git{Workspace: cfg.WorkspaceDir, AuthorName: cfg.GitAuthorName, AuthorEmail: cfg.GitAuthorEmail, GitHubToken: cfg.GitHubToken},
 		LLM:               llm.NewWithProvider(cfg.OpenAIAPIKey, cfg.OpenAIBaseURL, cfg.SpurModel, cfg.OpenRouterProviderOrder, cfg.OpenRouterAllowFallbacks),
 		Wrangler:          wrangler,
 		WranglerModel:     cfg.WranglerModel,

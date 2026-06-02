@@ -76,10 +76,6 @@ type IssueComment struct {
 	HTMLURL string `json:"html_url"`
 }
 
-func (c *Client) AuthedCloneURL(cloneURL string) string {
-	return strings.Replace(cloneURL, "https://", "https://x-access-token:"+c.token+"@", 1)
-}
-
 func (c *Client) GetRepository(ctx context.Context, repoFullName string) (Repository, error) {
 	var repo Repository
 	if err := c.request(ctx, "GET", fmt.Sprintf("https://api.github.com/repos/%s", repoFullName), nil, &repo); err != nil {

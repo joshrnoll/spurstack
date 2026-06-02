@@ -3,6 +3,7 @@ package gitutil
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,6 +15,7 @@ type Git struct {
 	Workspace   string
 	AuthorName  string
 	AuthorEmail string
+	GitHubToken string
 }
 
 func (g Git) PrepareWorktree(ctx context.Context, repoFullName, cloneURL, defaultBranch string, issueNumber int) (string, string, error) {
@@ -21,6 +23,7 @@ func (g Git) PrepareWorktree(ctx context.Context, repoFullName, cloneURL, defaul
 	cacheDir := filepath.Join(g.Workspace, "repos", repoID)
 	wtDir := filepath.Join(g.Workspace, "worktrees", repoID, fmt.Sprintf("issue-%d", issueNumber))
 	branch := fmt.Sprintf("agent/issue-%d", issueNumber)
+	plainCloneURL := plainRemoteURL(cloneURL)
 	if err := os.MkdirAll(filepath.Dir(cacheDir), 0o755); err != nil {
 		return "", "", err
 	}
@@ -28,11 +31,20 @@ func (g Git) PrepareWorktree(ctx context.Context, repoFullName, cloneURL, defaul
 		return "", "", err
 	}
 	if _, err := os.Stat(filepath.Join(cacheDir, ".git")); os.IsNotExist(err) {
-		if _, err := run(ctx, "", "git", "clone", cloneURL, cacheDir); err != nil {
+		if _, err := g.runAuthedGit(ctx, "", "clone", plainCloneURL, cacheDir); err != nil {
+			return "", "", err
+		}
+		if err := ensurePlainOriginURL(ctx, cacheDir); err != nil {
 			return "", "", err
 		}
 	} else {
-		if _, err := run(ctx, cacheDir, "git", "fetch", "origin", "--prune"); err != nil {
+		if err := ensurePlainOriginURL(ctx, cacheDir); err != nil {
+			return "", "", err
+		}
+		if _, err := g.runAuthedGit(ctx, cacheDir, "fetch", "origin", "--prune"); err != nil {
+			return "", "", err
+		}
+		if err := ensurePlainOriginURL(ctx, cacheDir); err != nil {
 			return "", "", err
 		}
 	}
@@ -66,7 +78,11 @@ func (g Git) CommitAll(ctx context.Context, dir, message string) (bool, error) {
 }
 
 func (g Git) Push(ctx context.Context, dir, branch string) error {
-	_, err := run(ctx, dir, "git", "push", "-u", "origin", branch, "--force-with-lease")
+	if err := ensurePlainOriginURL(ctx, dir); err != nil {
+		return err
+	}
+	_, err := g.runAuthedGit(ctx, dir, "push", "-u", "origin", branch, "--force-with-lease")
+	_ = ensurePlainOriginURL(ctx, dir)
 	return err
 }
 
@@ -91,15 +107,86 @@ func Run(ctx context.Context, dir string, args ...string) (string, error) {
 	return run(ctx, dir, args[0], args[1:]...)
 }
 
+func (g Git) runAuthedGit(ctx context.Context, dir string, args ...string) (string, error) {
+	gitArgs := append([]string{"-c", "credential.helper=", "-c", "credential.useHttpPath=true"}, args...)
+	if g.GitHubToken == "" {
+		return run(ctx, dir, "git", gitArgs...)
+	}
+	askpassDir, err := os.MkdirTemp("", "spurstack-git-askpass-*")
+	if err != nil {
+		return "", err
+	}
+	defer os.RemoveAll(askpassDir)
+	askpassPath := filepath.Join(askpassDir, "askpass.sh")
+	script := `#!/bin/sh
+case "$1" in
+  *Username*) printf '%s\n' "$GIT_USERNAME" ;;
+  *Password*) printf '%s\n' "$GIT_PASSWORD" ;;
+  *) printf '\n' ;;
+esac
+`
+	if err := os.WriteFile(askpassPath, []byte(script), 0o700); err != nil {
+		return "", err
+	}
+	env := []string{
+		"GIT_ASKPASS=" + askpassPath,
+		"GIT_USERNAME=x-access-token",
+		"GIT_PASSWORD=" + g.GitHubToken,
+	}
+	return runWithEnv(ctx, dir, env, "git", gitArgs...)
+}
+
 func run(ctx context.Context, dir, name string, args ...string) (string, error) {
+	return runWithEnv(ctx, dir, nil, name, args...)
+}
+
+func runWithEnv(ctx context.Context, dir string, extraEnv []string, name string, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GIT_TRACE=0", "GIT_TRACE_PACKET=0", "GIT_TRACE_CURL=0", "GIT_CURL_VERBOSE=0")
+	cmd.Env = append(cmd.Env, extraEnv...)
 	out, err := cmd.CombinedOutput()
+	cleanOut := redactSecrets(string(out))
 	if err != nil {
-		return string(out), fmt.Errorf("%s %s: %w\n%s", name, strings.Join(args, " "), err, string(out))
+		return cleanOut, fmt.Errorf("%s %s: %w\n%s", name, strings.Join(redactArgs(args), " "), err, cleanOut)
 	}
-	return string(out), nil
+	return cleanOut, nil
+}
+
+func ensurePlainOriginURL(ctx context.Context, dir string) error {
+	origin, err := run(ctx, dir, "git", "remote", "get-url", "origin")
+	if err != nil {
+		return err
+	}
+	plain := plainRemoteURL(strings.TrimSpace(origin))
+	if plain == strings.TrimSpace(origin) {
+		return nil
+	}
+	_, err = run(ctx, dir, "git", "remote", "set-url", "origin", plain)
+	return err
+}
+
+func plainRemoteURL(remote string) string {
+	u, err := url.Parse(remote)
+	if err != nil || u.User == nil {
+		return remote
+	}
+	u.User = nil
+	return u.String()
+}
+
+var tokenURLPattern = regexp.MustCompile(`https://x-access-token:[^@\s]+@`)
+
+func redactSecrets(s string) string {
+	return tokenURLPattern.ReplaceAllString(s, "https://x-access-token:REDACTED@")
+}
+
+func redactArgs(args []string) []string {
+	redacted := make([]string, len(args))
+	for i, arg := range args {
+		redacted[i] = redactSecrets(arg)
+	}
+	return redacted
 }
 
 var unsafe = regexp.MustCompile(`[^a-zA-Z0-9._-]+`)

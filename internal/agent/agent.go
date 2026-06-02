@@ -61,7 +61,7 @@ type wranglerOutcome struct {
 func (r *Runner) Run(ctx context.Context, job Job) error {
 	log := slog.With("repo", job.Repo.FullName, "issue", job.Issue.Number, "run_id", job.RunID)
 	log.Info("starting issue agent")
-	wt, branch, err := r.Git.PrepareWorktree(ctx, job.Repo.FullName, r.GitHub.AuthedCloneURL(job.Repo.CloneURL), job.Repo.DefaultBranch, job.Issue.Number)
+	wt, branch, err := r.Git.PrepareWorktree(ctx, job.Repo.FullName, job.Repo.CloneURL, job.Repo.DefaultBranch, job.Issue.Number)
 	if err != nil {
 		return err
 	}
