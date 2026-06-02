@@ -30,7 +30,7 @@ func Load() (Config, error) {
 		GitHubRepos:              splitCSV(os.Getenv("GITHUB_REPOSITORIES")),
 		OpenAIAPIKey:             os.Getenv("OPENAI_API_KEY"),
 		OpenAIBaseURL:            getenv("OPENAI_BASE_URL", "https://openrouter.ai/api/v1"),
-		OpenAIModel:              getenv("OPENAI_MODEL", "anthropic/claude-3.5-sonnet"),
+		OpenAIModel:              getenv("OPENAI_MODEL", "anthropic/claude-sonnet-4.6"),
 		OpenRouterProviderOrder:  splitCSV(os.Getenv("OPENROUTER_PROVIDER_ORDER")),
 		OpenRouterAllowFallbacks: getenvBool("OPENROUTER_ALLOW_FALLBACKS", true),
 		WorkspaceDir:             getenv("WORKSPACE_DIR", "/var/lib/spurstack/workspace"),

@@ -9,7 +9,7 @@ services:
       GITHUB_REPOSITORIES: ${GITHUB_REPOSITORIES:?GITHUB_REPOSITORIES is required}
       OPENAI_API_KEY: ${OPENAI_API_KEY:?OPENAI_API_KEY is required}
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://openrouter.ai/api/v1}
-      OPENAI_MODEL: ${OPENAI_MODEL:-anthropic/claude-3.5-sonnet}
+      OPENAI_MODEL: ${OPENAI_MODEL:-anthropic/claude-sonnet-4.6}
       OPENROUTER_PROVIDER_ORDER: ${OPENROUTER_PROVIDER_ORDER:-}
       OPENROUTER_ALLOW_FALLBACKS: ${OPENROUTER_ALLOW_FALLBACKS:-true}
       WORKSPACE_DIR: /var/lib/spurstack/workspace
