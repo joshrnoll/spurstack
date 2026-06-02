@@ -26,6 +26,8 @@ For each matching issue, Spurstack:
 
 The default LLM target is OpenRouter, but any OpenAI-compatible chat completions endpoint can be used. No inbound internet access is required; Spurstack only makes outbound HTTPS calls to GitHub and the model provider.
 
+Outbound GitHub calls default to a 60 second timeout. LLM chat completion calls default to a 10 minute per-call timeout and decode at most 4 MiB of response body. These defaults bound hung or oversized upstream responses while still allowing long implementation and wrangler prompts; tune `LLM_TIMEOUT` or `LLM_MAX_RESPONSE_BYTES` if your model/provider legitimately needs more.
+
 For OpenRouter, you can force provider routing. For example, to use DeepInfra only:
 
 ```bash
@@ -51,6 +53,10 @@ Environment variables:
 | `OPENROUTER_ALLOW_FALLBACKS` | no | `true` | Whether OpenRouter may fall back to other providers when `OPENROUTER_PROVIDER_ORDER` is set. |
 | `WORKSPACE_DIR` | no | `/var/lib/spurstack/workspace` | Persistent clone/worktree storage. |
 | `POLL_INTERVAL` | no | `60s` | GitHub polling interval. |
+| `GITHUB_TIMEOUT` | no | `60s` | Timeout for each outbound GitHub API call. |
+| `GITHUB_MAX_ERROR_BODY_BYTES` | no | `65536` | Maximum GitHub error response bytes kept in logs/errors. |
+| `LLM_TIMEOUT` | no | `10m` | Timeout for each LLM chat completion call. Increase for slower legitimate model calls. |
+| `LLM_MAX_RESPONSE_BYTES` | no | `4194304` | Maximum LLM response body bytes decoded per chat completion. |
 | `SPUR_LABEL` | no | `agent-ready` | Issue label that triggers spurs. |
 | `MAX_SPUR_STEPS` | no | `30` | Max model/tool iterations per spur run. |
 | `GIT_AUTHOR_NAME` | no | `Spurstack` | Commit author name. |
