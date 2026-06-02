@@ -101,6 +101,23 @@ func TestListPullRequestsFiltersByHeadAndBase(t *testing.T) {
 	}
 }
 
+func TestListIssuesIncludesAuthorAssociation(t *testing.T) {
+	client := &Client{token: "token", http: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if req.Method != "GET" {
+			t.Fatalf("unexpected method: %s", req.Method)
+		}
+		return response(http.StatusOK, `[{"number":1,"title":"task","author_association":"MEMBER","labels":[{"name":"agent-ready"}]}]`), nil
+	})}}
+
+	issues, err := client.ListIssues(context.Background(), "owner/repo", "agent-ready")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(issues) != 1 || issues[0].AuthorAssociation != "MEMBER" {
+		t.Fatalf("issues = %#v", issues)
+	}
+}
+
 func TestCreateIssueComment(t *testing.T) {
 	client := &Client{token: "token", http: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		if req.Method != "POST" {

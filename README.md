@@ -6,22 +6,23 @@
 
 Spurstack is a self-hosted stack of autonomous coding agents. Each issue runner is a **spur**: a small agent process that nudges a repository from a GitHub issue toward a pull request.
 
-Spurstack polls GitHub every 60 seconds and starts one spur for each open issue labeled `agent-ready`.
+Spurstack polls GitHub every 60 seconds and starts one spur for each open issue labeled `agent-ready` whose issue author is trusted.
 
 For each matching issue, Spurstack:
 
-1. Claims the issue by adding `agent-running` and removing `agent-ready`.
-2. Skips issues that also have `agent-running` or `agent-pr-opened`.
-3. Clones or updates the repository cache using plain remote URLs and non-persistent GitHub token authentication.
-4. Creates a dedicated git worktree and branch.
-5. Asks an OpenAI-compatible model for an implementation plan.
-6. Lets the spur read/edit/write files in the worktree.
-7. Allows the spur to create Conventional Commits as it completes coherent chunks of work.
-8. Commits any remaining uncommitted changes with a Conventional Commit message.
-9. Optionally runs a **wrangler** review cycle when `WRANGLER_MODEL` is configured.
-10. Pushes the branch and opens a GitHub pull request.
-11. Adds a `## Closes #<issue>` footer, wrangler comments when available, and the unique spur run ID to the PR body.
-12. Replaces `agent-running` with `agent-pr-opened` on success, or `agent-failed` on failure.
+1. Verifies the issue author is trusted to trigger a run.
+2. Claims the issue by adding `agent-running` and removing `agent-ready`.
+3. Skips issues that also have `agent-running` or `agent-pr-opened`.
+4. Clones or updates the repository cache using plain remote URLs and non-persistent GitHub token authentication.
+5. Creates a dedicated git worktree and branch.
+6. Asks an OpenAI-compatible model for an implementation plan.
+7. Lets the spur read/edit/write files in the worktree.
+8. Allows the spur to create Conventional Commits as it completes coherent chunks of work.
+9. Commits any remaining uncommitted changes with a Conventional Commit message.
+10. Optionally runs a **wrangler** review cycle when `WRANGLER_MODEL` is configured.
+11. Pushes the branch and opens a GitHub pull request.
+12. Adds a `## Closes #<issue>` footer, wrangler comments when available, and the unique spur run ID to the PR body.
+13. Replaces `agent-running` with `agent-pr-opened` on success, or `agent-failed` on failure.
 
 The default LLM target is OpenRouter, but any OpenAI-compatible chat completions endpoint can be used. No inbound internet access is required; Spurstack only makes outbound HTTPS calls to GitHub and the model provider.
 
@@ -53,6 +54,7 @@ Environment variables:
 | `MAX_SPUR_STEPS` | no | `30` | Max model/tool iterations per spur run. |
 | `GIT_AUTHOR_NAME` | no | `Spurstack` | Commit author name. |
 | `GIT_AUTHOR_EMAIL` | no | `spurstack@example.local` | Commit author email. |
+| `TRUSTED_AUTHOR_ASSOCIATIONS` | no | `OWNER,MEMBER,COLLABORATOR` | Comma-separated GitHub issue `author_association` values allowed to trigger runs. |
 
 ## GitHub setup
 
@@ -76,6 +78,10 @@ agent-failed
 ```
 
 To trigger Spurstack, add `agent-ready` to an open issue in a repo listed in `GITHUB_REPOSITORIES`.
+
+By default, only issues authored by GitHub users whose `author_association` is `OWNER`, `MEMBER`, or `COLLABORATOR` may trigger a spur. Issues from untrusted authors are not claimed as running and no job starts. Spurstack leaves a short issue comment explaining the skip and removes the trigger label to avoid repeated attempts.
+
+Spurstack is a polling service and currently authorizes the issue author, not the user who applied `agent-ready`. If a trusted collaborator wants to run Spurstack on an untrusted reporter's request, they should open a trusted follow-up issue or adjust `TRUSTED_AUTHOR_ASSOCIATIONS` intentionally.
 
 Agent labels act as a simple state machine:
 
