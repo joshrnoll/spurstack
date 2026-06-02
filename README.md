@@ -133,6 +133,14 @@ During implementation, a spur can request these app-owned actions:
 
 Spurs cannot run arbitrary shell commands, push branches, or mutate GitHub issues/PRs directly.
 
+### Protected paths
+
+Spurstack treats high-risk execution and configuration surfaces as **protected paths**. These files remain readable for context, but spur `write` and `edit` actions fail with a clear protected-path error, and Spurstack refuses to commit or push a run while protected-path changes are present.
+
+The default protected set is intentionally simple and hard-denied: `.github/`, `.git/`, CI directories/configs, Dockerfile/Containerfile variants, Compose files, package manager manifests and lockfiles, build files, Makefiles, and top-level script/CI directories. This reduces prompt-injection blast radius by preventing an issue body or wrangler feedback from silently changing workflows, dependency hooks, container builds, or other surfaces that could execute with repository or CI privileges.
+
+Legitimate changes to these paths should be made by a human outside Spurstack and reviewed through the normal repository process.
+
 ## Wranglers
 
 A **wrangler** is an optional reviewing model. Configure `WRANGLER_MODEL` to have Spurstack review the current diff after the spur calls `finish` and before the PR is opened.
