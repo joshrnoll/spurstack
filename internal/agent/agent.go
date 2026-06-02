@@ -3,8 +3,10 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -109,15 +111,46 @@ func (r *Runner) Run(ctx context.Context, job Job) error {
 	prBody = appendRunID(prBody, job.RunID)
 	pr, err := r.GitHub.CreatePullRequest(ctx, job.Repo.FullName, github.CreatePREquest{Title: prTitle, Head: branch, Base: job.Repo.DefaultBranch, Body: prBody, Draft: false})
 	if err != nil {
+		if handled, handleErr := r.handleExistingPullRequest(ctx, job, branch, err); handled || handleErr != nil {
+			if handleErr != nil {
+				return handleErr
+			}
+			cleanupWorktree(ctx, log, r, job)
+			return nil
+		}
 		return err
 	}
 	log.Info("pull request opened", "url", pr.HTMLURL)
+	cleanupWorktree(ctx, log, r, job)
+	return nil
+}
+
+func (r *Runner) handleExistingPullRequest(ctx context.Context, job Job, branch string, err error) (bool, error) {
+	var ghErr github.Error
+	if !errors.As(err, &ghErr) || ghErr.StatusCode != http.StatusUnprocessableEntity {
+		return false, nil
+	}
+	head := job.Repo.Owner.Login + ":" + branch
+	prs, listErr := r.GitHub.ListPullRequests(ctx, job.Repo.FullName, head, job.Repo.DefaultBranch)
+	if listErr != nil {
+		return true, listErr
+	}
+	if len(prs) == 0 {
+		return false, nil
+	}
+	body := fmt.Sprintf("PR already open for this issue: %s", prs[0].HTMLURL)
+	if _, commentErr := r.GitHub.CreateIssueComment(ctx, job.Repo.FullName, job.Issue.Number, body); commentErr != nil {
+		return true, commentErr
+	}
+	return true, nil
+}
+
+func cleanupWorktree(ctx context.Context, log *slog.Logger, r *Runner, job Job) {
 	if err := r.Git.RemoveWorktree(ctx, job.Repo.FullName, job.Issue.Number); err != nil {
 		log.Warn("failed to clean up worktree", "error", err)
 	} else {
 		log.Info("cleaned up worktree")
 	}
-	return nil
 }
 
 func appendRunID(body, runID string) string {
