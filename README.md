@@ -46,6 +46,7 @@ Environment variables:
 | `SPUR_MODEL` | no | `anthropic/claude-sonnet-4.6` | Model used by the implementation spur. |
 | `WRANGLER_MODEL` | no | | Optional model used to review spur changes before PR creation. If unset, no wrangler cycle runs. |
 | `MAX_WRANGLER_CYCLES` | no | `3` | Failed wrangler passes allowed before opening the PR anyway. Ignored when `WRANGLER_MODEL` is unset. |
+| `SPUR_PROTECTED_PATHS` | no | sensible built-in denylist | Comma-separated protected path patterns that replace the built-in denylist when set. Directory patterns end with `/`; file patterns may use `*`. |
 | `OPENROUTER_PROVIDER_ORDER` | no | | Comma-separated OpenRouter provider preference, e.g. `DeepInfra`. |
 | `OPENROUTER_ALLOW_FALLBACKS` | no | `true` | Whether OpenRouter may fall back to other providers when `OPENROUTER_PROVIDER_ORDER` is set. |
 | `WORKSPACE_DIR` | no | `/var/lib/spurstack/workspace` | Persistent clone/worktree storage. |
@@ -138,6 +139,14 @@ Spurs cannot run arbitrary shell commands, push branches, or mutate GitHub issue
 Spurstack treats high-risk execution and configuration surfaces as **protected paths**. These files remain readable for context, but spur `write` and `edit` actions fail with a clear protected-path error, and Spurstack refuses to commit or push a run while protected-path changes are present.
 
 The default protected set is intentionally simple and hard-denied: `.github/`, `.git/`, CI directories/configs, Dockerfile/Containerfile variants, Compose files, package manager manifests and lockfiles, build files, Makefiles, and top-level script/CI directories. This reduces prompt-injection blast radius by preventing an issue body or wrangler feedback from silently changing workflows, dependency hooks, container builds, or other surfaces that could execute with repository or CI privileges.
+
+Set `SPUR_PROTECTED_PATHS` to replace the built-in denylist with repository-specific patterns:
+
+```bash
+SPUR_PROTECTED_PATHS=".github/,ci/,deploy/,Dockerfile,package.json,*.lock"
+```
+
+Directory patterns end with `/` and match everything below that directory. File patterns without `/` match by basename anywhere in the repository and may use `*`. File patterns with `/` match the normalized repository-relative path.
 
 Legitimate changes to these paths should be made by a human outside Spurstack and reviewed through the normal repository process.
 

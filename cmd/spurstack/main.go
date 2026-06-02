@@ -322,6 +322,7 @@ func runJob(cfg config.Config, path string) error {
 		WranglerModel:     cfg.WranglerModel,
 		MaxSteps:          cfg.MaxAgentSteps,
 		MaxWranglerCycles: cfg.MaxWranglerCycles,
+		ProtectedPaths:    cfg.ProtectedPaths,
 	}
 	if job.RunID == "" {
 		job.RunID = newRunID()

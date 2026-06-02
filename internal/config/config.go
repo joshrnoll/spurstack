@@ -21,6 +21,7 @@ type Config struct {
 	AgentLabel                string
 	MaxAgentSteps             int
 	MaxWranglerCycles         int
+	ProtectedPaths            []string
 	GitAuthorName             string
 	GitAuthorEmail            string
 	PollInterval              time.Duration
@@ -41,6 +42,7 @@ func Load() (Config, error) {
 		AgentLabel:                getenv("SPUR_LABEL", "agent-ready"),
 		MaxAgentSteps:             getenvInt("MAX_SPUR_STEPS", 30),
 		MaxWranglerCycles:         getenvIntMin("MAX_WRANGLER_CYCLES", 3, 1),
+		ProtectedPaths:            splitCSV(os.Getenv("SPUR_PROTECTED_PATHS")),
 		GitAuthorName:             getenv("GIT_AUTHOR_NAME", "Spurstack"),
 		GitAuthorEmail:            getenv("GIT_AUTHOR_EMAIL", "spurstack@example.local"),
 		PollInterval:              getenvDuration("POLL_INTERVAL", 60*time.Second),

@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 
@@ -24,6 +25,7 @@ type Runner struct {
 	WranglerModel     string
 	MaxSteps          int
 	MaxWranglerCycles int
+	ProtectedPaths    []string
 }
 
 type Job struct {
@@ -85,14 +87,14 @@ func (r *Runner) Run(ctx context.Context, job Job) error {
 		return err
 	}
 	if dirty {
-		if err := ensureNoProtectedChanges(ctx, wt, job.Repo.DefaultBranch); err != nil {
+		if err := ensureNoProtectedChanges(ctx, wt, job.Repo.DefaultBranch, r.ProtectedPaths); err != nil {
 			return err
 		}
 		if _, err := r.Git.CommitAll(ctx, wt, msg); err != nil {
 			return err
 		}
 	}
-	if err := ensureNoProtectedChanges(ctx, wt, job.Repo.DefaultBranch); err != nil {
+	if err := ensureNoProtectedChanges(ctx, wt, job.Repo.DefaultBranch, r.ProtectedPaths); err != nil {
 		return err
 	}
 	changed, err := hasBranchFileChanges(ctx, wt, job.Repo.DefaultBranch)
@@ -261,7 +263,7 @@ func (r *Runner) execute(ctx context.Context, job Job, wt string, messages []llm
 			continue
 		}
 		slog.Info("agent action", "issue", job.Issue.Number, "action", act.Action, "path", act.Path)
-		obs, done, err := applyAction(ctx, wt, r.Git, act)
+		obs, done, err := applyAction(ctx, wt, r.Git, act, r.ProtectedPaths)
 		if err != nil {
 			obs = "ERROR: " + err.Error()
 		}
@@ -347,7 +349,7 @@ func parseWranglerResult(s string) (wranglerResult, error) {
 	return r, nil
 }
 
-func applyAction(ctx context.Context, wt string, git gitutil.Git, a action) (string, bool, error) {
+func applyAction(ctx context.Context, wt string, git gitutil.Git, a action, protectedPatterns []string) (string, bool, error) {
 	switch a.Action {
 	case "read":
 		p, err := safePath(wt, a.Path)
@@ -360,7 +362,7 @@ func applyAction(ctx context.Context, wt string, git gitutil.Git, a action) (str
 		}
 		return string(b), false, nil
 	case "write":
-		p, err := writablePath(wt, a.Path)
+		p, err := writablePath(wt, a.Path, protectedPatterns)
 		if err != nil {
 			return "", false, err
 		}
@@ -369,7 +371,7 @@ func applyAction(ctx context.Context, wt string, git gitutil.Git, a action) (str
 		}
 		return "wrote " + a.Path, false, os.WriteFile(p, []byte(a.Content), 0o644)
 	case "edit":
-		p, err := writablePath(wt, a.Path)
+		p, err := writablePath(wt, a.Path, protectedPatterns)
 		if err != nil {
 			return "", false, err
 		}
@@ -390,7 +392,7 @@ func applyAction(ctx context.Context, wt string, git gitutil.Git, a action) (str
 		if strings.TrimSpace(a.CommitMessage) == "" {
 			return "", false, fmt.Errorf("commit_message is required")
 		}
-		if err := ensureNoProtectedChanges(ctx, wt, ""); err != nil {
+		if err := ensureNoProtectedChanges(ctx, wt, "", protectedPatterns); err != nil {
 			return "", false, err
 		}
 		committed, err := git.CommitAll(ctx, wt, a.CommitMessage)
@@ -507,7 +509,7 @@ func safePath(root, rel string) (string, error) {
 	return p, nil
 }
 
-func writablePath(root, rel string) (string, error) {
+func writablePath(root, rel string, protectedPatterns []string) (string, error) {
 	p, err := safePath(root, rel)
 	if err != nil {
 		return "", err
@@ -516,54 +518,66 @@ func writablePath(root, rel string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if isProtectedPath(cleanRel) {
+	if isProtectedPath(cleanRel, protectedPatterns) {
 		return "", fmt.Errorf("protected path %q cannot be written or edited by the agent", filepath.ToSlash(filepath.Clean(cleanRel)))
 	}
 	return p, nil
 }
 
-func isProtectedPath(rel string) bool {
+var defaultProtectedPathPatterns = []string{
+	".git/", ".github/", ".circleci/", ".buildkite/", ".azure-pipelines/", ".teamcity/", "ci/", "scripts/",
+	"Dockerfile", "Dockerfile.*", "Containerfile", "Containerfile.*", "docker-compose.yml", "docker-compose.yaml",
+	"Jenkinsfile", ".gitlab-ci.yml", ".gitlab-ci.yaml", "azure-pipelines.yml", "azure-pipelines.yaml", "bitbucket-pipelines.yml",
+	"package.json", "package-lock.json", "npm-shrinkwrap.json", "yarn.lock", "pnpm-lock.yaml",
+	"go.mod", "go.sum", "Cargo.toml", "Cargo.lock",
+	"pyproject.toml", "poetry.lock", "Pipfile", "Pipfile.lock", "requirements.txt", "requirements*.txt",
+	"Gemfile", "Gemfile.lock", "composer.json", "composer.lock",
+	"pom.xml", "build.gradle", "build.gradle.kts", "gradle.lockfile", "Makefile",
+}
+
+func isProtectedPath(rel string, protectedPatterns []string) bool {
 	clean := filepath.ToSlash(filepath.Clean(rel))
 	if clean == "." || clean == "" || strings.HasPrefix(clean, "../") || strings.HasPrefix(clean, "/") {
 		return false
 	}
 	lower := strings.ToLower(clean)
-	base := strings.ToLower(pathBase(clean))
-	if lower == ".git" || strings.HasPrefix(lower, ".git/") || lower == ".github" || strings.HasPrefix(lower, ".github/") {
-		return true
+	base := strings.ToLower(path.Base(clean))
+	patterns := protectedPatterns
+	if len(patterns) == 0 {
+		patterns = defaultProtectedPathPatterns
 	}
-	protectedDirs := []string{".circleci", ".buildkite", ".azure-pipelines", ".teamcity", "ci", "scripts"}
-	for _, dir := range protectedDirs {
-		if lower == dir || strings.HasPrefix(lower, dir+"/") {
+	for _, pattern := range patterns {
+		pattern = strings.TrimSpace(pattern)
+		if pattern == "" {
+			continue
+		}
+		isDirPattern := strings.HasSuffix(pattern, "/")
+		pattern = strings.ToLower(filepath.ToSlash(filepath.Clean(pattern)))
+		if pattern == "." || pattern == "" {
+			continue
+		}
+		if isDirPattern {
+			dir := strings.TrimSuffix(pattern, "/")
+			if lower == dir || strings.HasPrefix(lower, dir+"/") {
+				return true
+			}
+			continue
+		}
+		if strings.Contains(pattern, "/") {
+			if ok, _ := path.Match(pattern, lower); ok {
+				return true
+			}
+			continue
+		}
+		if ok, _ := path.Match(pattern, base); ok {
 			return true
 		}
 	}
-	protectedNames := map[string]bool{
-		"dockerfile": true, "containerfile": true, "docker-compose.yml": true, "docker-compose.yaml": true,
-		"jenkinsfile": true, ".gitlab-ci.yml": true, ".gitlab-ci.yaml": true, "azure-pipelines.yml": true, "azure-pipelines.yaml": true, "bitbucket-pipelines.yml": true,
-		"package.json": true, "package-lock.json": true, "npm-shrinkwrap.json": true, "yarn.lock": true, "pnpm-lock.yaml": true,
-		"go.mod": true, "go.sum": true, "cargo.toml": true, "cargo.lock": true,
-		"pyproject.toml": true, "poetry.lock": true, "pipfile": true, "pipfile.lock": true, "requirements.txt": true,
-		"gemfile": true, "gemfile.lock": true, "composer.json": true, "composer.lock": true,
-		"pom.xml": true, "build.gradle": true, "build.gradle.kts": true, "gradle.lockfile": true,
-		"makefile": true,
-	}
-	if protectedNames[base] {
-		return true
-	}
-	return strings.HasPrefix(base, "dockerfile.") || strings.HasPrefix(base, "containerfile.") || (strings.HasPrefix(base, "requirements") && strings.HasSuffix(base, ".txt"))
+	return false
 }
 
-func pathBase(rel string) string {
-	i := strings.LastIndex(rel, "/")
-	if i == -1 {
-		return rel
-	}
-	return rel[i+1:]
-}
-
-func ensureNoProtectedChanges(ctx context.Context, wt, defaultBranch string) error {
-	paths, err := changedProtectedPaths(ctx, wt, defaultBranch)
+func ensureNoProtectedChanges(ctx context.Context, wt, defaultBranch string, protectedPatterns []string) error {
+	paths, err := changedProtectedPaths(ctx, wt, defaultBranch, protectedPatterns)
 	if err != nil {
 		return err
 	}
@@ -573,12 +587,12 @@ func ensureNoProtectedChanges(ctx context.Context, wt, defaultBranch string) err
 	return nil
 }
 
-func changedProtectedPaths(ctx context.Context, wt, defaultBranch string) ([]string, error) {
+func changedProtectedPaths(ctx context.Context, wt, defaultBranch string, protectedPatterns []string) ([]string, error) {
 	var changed []string
 	seen := map[string]bool{}
 	add := func(rel string) {
 		rel = filepath.ToSlash(filepath.Clean(strings.TrimSpace(rel)))
-		if rel == "." || rel == "" || seen[rel] || !isProtectedPath(rel) {
+		if rel == "." || rel == "" || seen[rel] || !isProtectedPath(rel, protectedPatterns) {
 			return
 		}
 		seen[rel] = true

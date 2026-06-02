@@ -62,7 +62,7 @@ func TestParseWranglerResultRejectsUnknownStatus(t *testing.T) {
 
 func TestApplyActionDeniesProtectedWrite(t *testing.T) {
 	wt := t.TempDir()
-	_, _, err := applyAction(context.Background(), wt, gitutil.Git{}, action{Action: "write", Path: ".github/workflows/ci.yml", Content: "name: ci"})
+	_, _, err := applyAction(context.Background(), wt, gitutil.Git{}, action{Action: "write", Path: ".github/workflows/ci.yml", Content: "name: ci"}, nil)
 	if err == nil {
 		t.Fatal("expected protected path write to fail")
 	}
@@ -80,7 +80,7 @@ func TestApplyActionDeniesProtectedEdit(t *testing.T) {
 	if err := os.WriteFile(path, []byte("FROM alpine\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	_, _, err := applyAction(context.Background(), wt, gitutil.Git{}, action{Action: "edit", Path: "Dockerfile", OldText: "alpine", NewText: "debian"})
+	_, _, err := applyAction(context.Background(), wt, gitutil.Git{}, action{Action: "edit", Path: "Dockerfile", OldText: "alpine", NewText: "debian"}, nil)
 	if err == nil {
 		t.Fatal("expected protected path edit to fail")
 	}
@@ -96,10 +96,10 @@ func TestApplyActionDeniesProtectedEdit(t *testing.T) {
 func TestApplyActionAllowsNormalWriteAndEdit(t *testing.T) {
 	wt := t.TempDir()
 	ctx := context.Background()
-	if _, _, err := applyAction(ctx, wt, gitutil.Git{}, action{Action: "write", Path: "docs/guide.md", Content: "hello"}); err != nil {
+	if _, _, err := applyAction(ctx, wt, gitutil.Git{}, action{Action: "write", Path: "docs/guide.md", Content: "hello"}, nil); err != nil {
 		t.Fatalf("normal write failed: %v", err)
 	}
-	if _, _, err := applyAction(ctx, wt, gitutil.Git{}, action{Action: "edit", Path: "docs/guide.md", OldText: "hello", NewText: "hello world"}); err != nil {
+	if _, _, err := applyAction(ctx, wt, gitutil.Git{}, action{Action: "edit", Path: "docs/guide.md", OldText: "hello", NewText: "hello world"}, nil); err != nil {
 		t.Fatalf("normal edit failed: %v", err)
 	}
 	got, err := os.ReadFile(filepath.Join(wt, "docs", "guide.md"))
@@ -113,12 +113,22 @@ func TestApplyActionAllowsNormalWriteAndEdit(t *testing.T) {
 
 func TestWritablePathNormalizesBeforeProtectionCheck(t *testing.T) {
 	wt := t.TempDir()
-	_, err := writablePath(wt, "docs/../.github/workflows/ci.yml")
+	_, err := writablePath(wt, "docs/../.github/workflows/ci.yml", nil)
 	if err == nil {
 		t.Fatal("expected normalized protected path to be denied")
 	}
 	if !strings.Contains(err.Error(), ".github/workflows/ci.yml") {
 		t.Fatalf("expected normalized protected path in error, got %v", err)
+	}
+}
+
+func TestWritablePathUsesCustomProtectedPatterns(t *testing.T) {
+	wt := t.TempDir()
+	if _, err := writablePath(wt, "go.mod", []string{"deploy/"}); err != nil {
+		t.Fatalf("custom patterns should replace defaults, got %v", err)
+	}
+	if _, err := writablePath(wt, "deploy/prod.yml", []string{"deploy/"}); err == nil {
+		t.Fatal("expected custom protected directory to be denied")
 	}
 }
 
@@ -128,7 +138,7 @@ func TestApplyActionReadAllowsProtectedPath(t *testing.T) {
 	if err := os.WriteFile(path, []byte("module test\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	obs, _, err := applyAction(context.Background(), wt, gitutil.Git{}, action{Action: "read", Path: "go.mod"})
+	obs, _, err := applyAction(context.Background(), wt, gitutil.Git{}, action{Action: "read", Path: "go.mod"}, nil)
 	if err != nil {
 		t.Fatalf("protected read failed: %v", err)
 	}
@@ -150,7 +160,7 @@ func TestEnsureNoProtectedChangesBlocksCommitSurface(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(wt, "package.json"), []byte("{}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := ensureNoProtectedChanges(context.Background(), wt, ""); err == nil {
+	if err := ensureNoProtectedChanges(context.Background(), wt, "", nil); err == nil {
 		t.Fatal("expected protected package manifest change to be blocked")
 	}
 }
