@@ -16,10 +16,11 @@ For each matching issue, Spurstack:
 4. Creates a dedicated git worktree and branch.
 5. Asks an OpenAI-compatible model for an implementation plan.
 6. Lets the spur read/edit/write files in the worktree.
-7. Commits changes with a Conventional Commit message.
-8. Pushes the branch and opens a GitHub pull request.
-9. Adds the unique spur run ID to the PR body so logs can be found later.
-10. Replaces `agent-running` with `agent-pr-opened` on success, or `agent-failed` on failure.
+7. Allows the spur to create Conventional Commits as it completes coherent chunks of work.
+8. Commits any remaining uncommitted changes with a Conventional Commit message.
+9. Pushes the branch and opens a GitHub pull request.
+10. Adds the unique spur run ID to the PR body so logs can be found later.
+11. Replaces `agent-running` with `agent-pr-opened` on success, or `agent-failed` on failure.
 
 The default LLM target is OpenRouter, but any OpenAI-compatible chat completions endpoint can be used. No inbound internet access is required; Spurstack only makes outbound HTTPS calls to GitHub and the model provider.
 
@@ -104,6 +105,18 @@ docker run --rm \
   -v spurstack-workspace:/var/lib/spurstack/workspace \
   spurstack
 ```
+
+## Spur tools
+
+During implementation, a spur can request these app-owned actions:
+
+- `read`: read a relative path inside the worktree.
+- `write`: create or fully rewrite a relative path.
+- `edit`: replace exactly one matching text block in an existing file.
+- `commit`: commit all current file changes with a Conventional Commit message.
+- `finish`: return final PR metadata; Spurstack commits any remaining changes, pushes, and opens the PR.
+
+Spurs cannot run arbitrary shell commands, push branches, or mutate GitHub issues/PRs directly.
 
 ## Logs and run IDs
 

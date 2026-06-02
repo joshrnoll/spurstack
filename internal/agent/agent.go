@@ -58,11 +58,20 @@ func (r *Runner) Run(ctx context.Context, job Job) error {
 	if msg == "" {
 		msg = fmt.Sprintf("fix: address issue #%d", job.Issue.Number)
 	}
-	committed, err := r.Git.CommitAll(ctx, wt, msg)
+	dirty, err := hasUncommittedChanges(ctx, wt)
 	if err != nil {
 		return err
 	}
-	if !committed {
+	if dirty {
+		if _, err := r.Git.CommitAll(ctx, wt, msg); err != nil {
+			return err
+		}
+	}
+	changed, err := hasBranchFileChanges(ctx, wt, job.Repo.DefaultBranch)
+	if err != nil {
+		return err
+	}
+	if !changed {
 		return fmt.Errorf("agent finished without file changes")
 	}
 	if err := r.Git.Push(ctx, wt, branch); err != nil {
@@ -99,7 +108,7 @@ func appendRunID(body, runID string) string {
 
 func (r *Runner) plan(ctx context.Context, job Job, wt string) (string, error) {
 	tree, _ := repoTree(wt, 200)
-	prompt := fmt.Sprintf("Issue #%d: %s\nURL: %s\n\n%s\n\nRepository tree:\n%s\n\nCreate a concise implementation plan for file changes only. Do not include git commit, push, PR, label, or issue-closing steps; the app handles those after implementation. Do not write code yet.", job.Issue.Number, job.Issue.Title, job.Issue.HTMLURL, job.Issue.Body, tree)
+	prompt := fmt.Sprintf("Issue #%d: %s\nURL: %s\n\n%s\n\nRepository tree:\n%s\n\nCreate a concise implementation plan. You may group larger work into multiple commits during implementation, but do not include push, PR, label, or issue-closing steps; the app handles those after implementation. Do not write code yet.", job.Issue.Number, job.Issue.Title, job.Issue.HTMLURL, job.Issue.Body, tree)
 	return r.LLM.Chat(ctx, []llm.Message{{Role: "system", Content: "You are a senior software engineer planning a small GitHub issue implementation."}, {Role: "user", Content: prompt}})
 }
 
@@ -109,8 +118,9 @@ Available actions:
 {"action":"read","path":"relative/file"}
 {"action":"write","path":"relative/file","content":"full new file content"}
 {"action":"edit","path":"relative/file","old_text":"exact text to replace","new_text":"replacement text"}
+{"action":"commit","commit_message":"conventional commit <=72 chars"}
 {"action":"finish","commit_message":"conventional commit <=72 chars","pr_title":"title","pr_body":"summary and testing notes"}
-Rules: inspect files before editing, keep changes minimal, use edit for existing files, use write only for new files or complete rewrites, and do not run shell or git commands. The app handles commit, push, and pull request creation after finish.`
+Rules: inspect files before editing, keep changes minimal, use edit for existing files, use write only for new files or complete rewrites, and do not run shell commands. Use commit to save coherent groups of completed changes during larger work. The app handles final commit of any remaining changes, push, and pull request creation after finish.`
 	messages := []llm.Message{{Role: "system", Content: system}, {Role: "user", Content: fmt.Sprintf("Implement issue #%d: %s\n\nIssue body:\n%s\n\nPlan:\n%s\n\nInitial tree:\n%s", job.Issue.Number, job.Issue.Title, job.Issue.Body, plan, mustTree(wt))}}
 	for step := 0; step < r.MaxSteps; step++ {
 		resp, err := r.LLM.Chat(ctx, messages)
@@ -123,7 +133,7 @@ Rules: inspect files before editing, keep changes minimal, use edit for existing
 			continue
 		}
 		slog.Info("agent action", "issue", job.Issue.Number, "action", act.Action, "path", act.Path)
-		obs, done, err := applyAction(ctx, wt, act)
+		obs, done, err := applyAction(ctx, wt, r.Git, act)
 		if err != nil {
 			obs = "ERROR: " + err.Error()
 		}
@@ -133,10 +143,14 @@ Rules: inspect files before editing, keep changes minimal, use edit for existing
 			if err != nil {
 				return action{}, err
 			}
-			if dirty {
+			changed, err := hasBranchFileChanges(ctx, wt, job.Repo.DefaultBranch)
+			if err != nil {
+				return action{}, err
+			}
+			if dirty || changed {
 				return act, nil
 			}
-			messages = append(messages, llm.Message{Role: "user", Content: "Cannot finish yet: there are no file changes in the worktree. Use write or edit to implement the issue, then finish."})
+			messages = append(messages, llm.Message{Role: "user", Content: "Cannot finish yet: there are no file changes or commits on the branch. Use write/edit to implement the issue, optionally commit, then finish."})
 			continue
 		}
 		messages = append(messages, llm.Message{Role: "user", Content: truncate(obs, 12000)})
@@ -144,7 +158,7 @@ Rules: inspect files before editing, keep changes minimal, use edit for existing
 	return action{}, fmt.Errorf("max agent steps reached")
 }
 
-func applyAction(ctx context.Context, wt string, a action) (string, bool, error) {
+func applyAction(ctx context.Context, wt string, git gitutil.Git, a action) (string, bool, error) {
 	switch a.Action {
 	case "read":
 		p, err := safePath(wt, a.Path)
@@ -183,6 +197,18 @@ func applyAction(ctx context.Context, wt string, a action) (string, bool, error)
 		}
 		updated := strings.Replace(content, a.OldText, a.NewText, 1)
 		return "edited " + a.Path, false, os.WriteFile(p, []byte(updated), 0o644)
+	case "commit":
+		if strings.TrimSpace(a.CommitMessage) == "" {
+			return "", false, fmt.Errorf("commit_message is required")
+		}
+		committed, err := git.CommitAll(ctx, wt, a.CommitMessage)
+		if err != nil {
+			return "", false, err
+		}
+		if !committed {
+			return "", false, fmt.Errorf("no file changes to commit")
+		}
+		return "committed changes", false, nil
 	case "finish":
 		return "finished", true, nil
 	default:
@@ -210,6 +236,15 @@ func hasUncommittedChanges(ctx context.Context, wt string) (bool, error) {
 		return false, err
 	}
 	return strings.TrimSpace(status) != "", nil
+}
+
+func hasBranchFileChanges(ctx context.Context, wt, defaultBranch string) (bool, error) {
+	base := "origin/" + defaultBranch
+	out, err := gitutil.Run(ctx, wt, "git", "diff", "--name-only", base+"..HEAD")
+	if err != nil {
+		return false, err
+	}
+	return strings.TrimSpace(out) != "", nil
 }
 
 func safePath(root, rel string) (string, error) {
