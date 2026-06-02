@@ -211,11 +211,18 @@ func runJob(cfg config.Config, path string) error {
 		return err
 	}
 	gh := github.NewClient(cfg.GitHubToken)
+	var wrangler *llm.Client
+	if cfg.WranglerModel != "" {
+		wrangler = llm.NewWithProvider(cfg.OpenAIAPIKey, cfg.OpenAIBaseURL, cfg.WranglerModel, cfg.OpenRouterProviderOrder, cfg.OpenRouterAllowFallbacks)
+	}
 	r := &agent.Runner{
-		GitHub:   gh,
-		Git:      gitutil.Git{Workspace: cfg.WorkspaceDir, AuthorName: cfg.GitAuthorName, AuthorEmail: cfg.GitAuthorEmail},
-		LLM:      llm.NewWithProvider(cfg.OpenAIAPIKey, cfg.OpenAIBaseURL, cfg.OpenAIModel, cfg.OpenRouterProviderOrder, cfg.OpenRouterAllowFallbacks),
-		MaxSteps: cfg.MaxAgentSteps,
+		GitHub:            gh,
+		Git:               gitutil.Git{Workspace: cfg.WorkspaceDir, AuthorName: cfg.GitAuthorName, AuthorEmail: cfg.GitAuthorEmail},
+		LLM:               llm.NewWithProvider(cfg.OpenAIAPIKey, cfg.OpenAIBaseURL, cfg.SpurModel, cfg.OpenRouterProviderOrder, cfg.OpenRouterAllowFallbacks),
+		Wrangler:          wrangler,
+		WranglerModel:     cfg.WranglerModel,
+		MaxSteps:          cfg.MaxAgentSteps,
+		MaxWranglerCycles: cfg.MaxWranglerCycles,
 	}
 	if job.RunID == "" {
 		job.RunID = newRunID()
