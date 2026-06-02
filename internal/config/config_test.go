@@ -56,6 +56,27 @@ func TestLoadDoesNotUseOldModelAlias(t *testing.T) {
 	}
 }
 
+func TestLoadUsesNetworkLimitConfig(t *testing.T) {
+	t.Setenv("GITHUB_TOKEN", "token")
+	t.Setenv("GITHUB_REPOSITORIES", "owner/repo")
+	t.Setenv("OPENAI_API_KEY", "key")
+	t.Setenv("GITHUB_TIMEOUT", "5s")
+	t.Setenv("GITHUB_MAX_ERROR_BODY_BYTES", "123")
+	t.Setenv("LLM_TIMEOUT", "2m")
+	t.Setenv("LLM_MAX_RESPONSE_BYTES", "456")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.GitHubTimeout.String() != "5s" || cfg.GitHubMaxErrorBodyBytes != 123 {
+		t.Fatalf("github limits = %s/%d", cfg.GitHubTimeout, cfg.GitHubMaxErrorBodyBytes)
+	}
+	if cfg.LLMTimeout.String() != "2m0s" || cfg.LLMMaxResponseBytes != 456 {
+		t.Fatalf("llm limits = %s/%d", cfg.LLMTimeout, cfg.LLMMaxResponseBytes)
+	}
+}
+
 func TestMaxWranglerCyclesMinimum(t *testing.T) {
 	t.Setenv("GITHUB_TOKEN", "token")
 	t.Setenv("GITHUB_REPOSITORIES", "owner/repo")

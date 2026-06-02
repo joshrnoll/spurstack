@@ -26,6 +26,10 @@ type Config struct {
 	GitAuthorEmail            string
 	PollInterval              time.Duration
 	TrustedAuthorAssociations []string
+	GitHubTimeout             time.Duration
+	GitHubMaxErrorBodyBytes   int64
+	LLMTimeout                time.Duration
+	LLMMaxResponseBytes       int64
 }
 
 func Load() (Config, error) {
@@ -47,6 +51,10 @@ func Load() (Config, error) {
 		GitAuthorEmail:            getenv("GIT_AUTHOR_EMAIL", "spurstack@example.local"),
 		PollInterval:              getenvDuration("POLL_INTERVAL", 60*time.Second),
 		TrustedAuthorAssociations: splitCSV(getenv("TRUSTED_AUTHOR_ASSOCIATIONS", "OWNER,MEMBER,COLLABORATOR")),
+		GitHubTimeout:             getenvDuration("GITHUB_TIMEOUT", 60*time.Second),
+		GitHubMaxErrorBodyBytes:   int64(getenvInt("GITHUB_MAX_ERROR_BODY_BYTES", 64*1024)),
+		LLMTimeout:                getenvDuration("LLM_TIMEOUT", 10*time.Minute),
+		LLMMaxResponseBytes:       int64(getenvInt("LLM_MAX_RESPONSE_BYTES", 4*1024*1024)),
 	}
 	if cfg.GitHubToken == "" {
 		return cfg, fmt.Errorf("GITHUB_TOKEN is required")
