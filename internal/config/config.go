@@ -13,12 +13,14 @@ type Config struct {
 	GitHubRepos              []string
 	OpenAIAPIKey             string
 	OpenAIBaseURL            string
-	OpenAIModel              string
+	SpurModel                string
+	WranglerModel            string
 	OpenRouterProviderOrder  []string
 	OpenRouterAllowFallbacks bool
 	WorkspaceDir             string
 	AgentLabel               string
 	MaxAgentSteps            int
+	MaxWranglerCycles        int
 	GitAuthorName            string
 	GitAuthorEmail           string
 	PollInterval             time.Duration
@@ -30,14 +32,16 @@ func Load() (Config, error) {
 		GitHubRepos:              splitCSV(os.Getenv("GITHUB_REPOSITORIES")),
 		OpenAIAPIKey:             os.Getenv("OPENAI_API_KEY"),
 		OpenAIBaseURL:            getenv("OPENAI_BASE_URL", "https://openrouter.ai/api/v1"),
-		OpenAIModel:              getenv("OPENAI_MODEL", "anthropic/claude-sonnet-4.6"),
+		SpurModel:                getenv("SPUR_MODEL", "anthropic/claude-sonnet-4.6"),
+		WranglerModel:            os.Getenv("WRANGLER_MODEL"),
 		OpenRouterProviderOrder:  splitCSV(os.Getenv("OPENROUTER_PROVIDER_ORDER")),
 		OpenRouterAllowFallbacks: getenvBool("OPENROUTER_ALLOW_FALLBACKS", true),
 		WorkspaceDir:             getenv("WORKSPACE_DIR", "/var/lib/spurstack/workspace"),
-		AgentLabel:               getenvAny([]string{"SPUR_LABEL", "AGENT_LABEL"}, "agent-ready"),
-		MaxAgentSteps:            getenvIntAny([]string{"MAX_SPUR_STEPS", "MAX_AGENT_STEPS"}, 30),
+		AgentLabel:               getenv("SPUR_LABEL", "agent-ready"),
+		MaxAgentSteps:            getenvInt("MAX_SPUR_STEPS", 30),
+		MaxWranglerCycles:        getenvIntMin("MAX_WRANGLER_CYCLES", 3, 1),
 		GitAuthorName:            getenv("GIT_AUTHOR_NAME", "Spurstack"),
-		GitAuthorEmail:           getenv("GIT_AUTHOR_EMAIL", "issue-agent@example.local"),
+		GitAuthorEmail:           getenv("GIT_AUTHOR_EMAIL", "spurstack@example.local"),
 		PollInterval:             getenvDuration("POLL_INTERVAL", 60*time.Second),
 	}
 	if cfg.GitHubToken == "" {
@@ -53,14 +57,8 @@ func Load() (Config, error) {
 }
 
 func getenv(name, fallback string) string {
-	return getenvAny([]string{name}, fallback)
-}
-
-func getenvAny(names []string, fallback string) string {
-	for _, name := range names {
-		if v := os.Getenv(name); v != "" {
-			return v
-		}
+	if v := os.Getenv(name); v != "" {
+		return v
 	}
 	return fallback
 }
@@ -92,22 +90,30 @@ func getenvBool(name string, fallback bool) bool {
 }
 
 func getenvInt(name string, fallback int) int {
-	return getenvIntAny([]string{name}, fallback)
+	v := os.Getenv(name)
+	if v == "" {
+		return fallback
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n <= 0 {
+		return fallback
+	}
+	return n
 }
 
-func getenvIntAny(names []string, fallback int) int {
-	for _, name := range names {
-		v := os.Getenv(name)
-		if v == "" {
-			continue
-		}
-		n, err := strconv.Atoi(v)
-		if err != nil || n <= 0 {
-			return fallback
-		}
-		return n
+func getenvIntMin(name string, fallback, min int) int {
+	v := os.Getenv(name)
+	if v == "" {
+		return fallback
 	}
-	return fallback
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		return fallback
+	}
+	if n < min {
+		return min
+	}
+	return n
 }
 
 func getenvDuration(name string, fallback time.Duration) time.Duration {

@@ -6,6 +6,7 @@
 # Local workspace/state
 workspace/
 .worktrees/
+PLAN.md
 
 # Build outputs
 /bin/

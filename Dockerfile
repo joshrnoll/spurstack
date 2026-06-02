@@ -12,6 +12,7 @@ RUN apt-get update \
 COPY --from=build /out/spurstack /usr/local/bin/spurstack
 ENV WORKSPACE_DIR=/var/lib/spurstack/workspace \
     OPENAI_BASE_URL=https://openrouter.ai/api/v1 \
+    SPUR_MODEL=anthropic/claude-sonnet-4.6 \
     SPUR_LABEL=agent-ready \
     POLL_INTERVAL=60s
 VOLUME ["/var/lib/spurstack/workspace"]

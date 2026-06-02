@@ -18,9 +18,10 @@ For each matching issue, Spurstack:
 6. Lets the spur read/edit/write files in the worktree.
 7. Allows the spur to create Conventional Commits as it completes coherent chunks of work.
 8. Commits any remaining uncommitted changes with a Conventional Commit message.
-9. Pushes the branch and opens a GitHub pull request.
-10. Adds the unique spur run ID to the PR body so logs can be found later.
-11. Replaces `agent-running` with `agent-pr-opened` on success, or `agent-failed` on failure.
+9. Optionally runs a **wrangler** review cycle when `WRANGLER_MODEL` is configured.
+10. Pushes the branch and opens a GitHub pull request.
+11. Adds wrangler comments, when available, and the unique spur run ID to the PR body.
+12. Replaces `agent-running` with `agent-pr-opened` on success, or `agent-failed` on failure.
 
 The default LLM target is OpenRouter, but any OpenAI-compatible chat completions endpoint can be used. No inbound internet access is required; Spurstack only makes outbound HTTPS calls to GitHub and the model provider.
 
@@ -41,7 +42,9 @@ Environment variables:
 | `GITHUB_REPOSITORIES` | yes | | Comma-separated repos to poll, e.g. `owner/repo,owner/other-repo`. |
 | `OPENAI_API_KEY` | yes | | OpenRouter/OpenAI-compatible API key. |
 | `OPENAI_BASE_URL` | no | `https://openrouter.ai/api/v1` | OpenAI-compatible API base URL. |
-| `OPENAI_MODEL` | no | `anthropic/claude-sonnet-4.6` | Model name. |
+| `SPUR_MODEL` | no | `anthropic/claude-sonnet-4.6` | Model used by the implementation spur. |
+| `WRANGLER_MODEL` | no | | Optional model used to review spur changes before PR creation. If unset, no wrangler cycle runs. |
+| `MAX_WRANGLER_CYCLES` | no | `3` | Failed wrangler passes allowed before opening the PR anyway. Ignored when `WRANGLER_MODEL` is unset. |
 | `OPENROUTER_PROVIDER_ORDER` | no | | Comma-separated OpenRouter provider preference, e.g. `DeepInfra`. |
 | `OPENROUTER_ALLOW_FALLBACKS` | no | `true` | Whether OpenRouter may fall back to other providers when `OPENROUTER_PROVIDER_ORDER` is set. |
 | `WORKSPACE_DIR` | no | `/var/lib/spurstack/workspace` | Persistent clone/worktree storage. |
@@ -50,8 +53,6 @@ Environment variables:
 | `MAX_SPUR_STEPS` | no | `30` | Max model/tool iterations per spur run. |
 | `GIT_AUTHOR_NAME` | no | `Spurstack` | Commit author name. |
 | `GIT_AUTHOR_EMAIL` | no | `spurstack@example.local` | Commit author email. |
-
-Backward-compatible aliases are still accepted for now: `AGENT_LABEL` and `MAX_AGENT_STEPS`.
 
 ## GitHub setup
 
@@ -117,6 +118,26 @@ During implementation, a spur can request these app-owned actions:
 - `finish`: return final PR metadata; Spurstack commits any remaining changes, pushes, and opens the PR.
 
 Spurs cannot run arbitrary shell commands, push branches, or mutate GitHub issues/PRs directly.
+
+## Wranglers
+
+A **wrangler** is an optional reviewing model. Configure `WRANGLER_MODEL` to have Spurstack review the current diff after the spur calls `finish` and before the PR is opened.
+
+If the wrangler finds issues, its comments are sent back to the spur and the spur resumes its work loop. If `MAX_WRANGLER_CYCLES` is exceeded, Spurstack still opens the PR and adds the latest concerns for human review.
+
+PRs reviewed by a wrangler include this section after the spur-provided PR body:
+
+```md
+## Wrangler Comments (<model-name>)
+```
+
+When max wrangler cycles are exceeded, that section starts with:
+
+```md
+**NOTE: Max Wrangler Cycles Exceeded. Concerns Listed Below**
+```
+
+When `WRANGLER_MODEL` is unset, Spurstack skips the wrangler cycle and omits the wrangler comments section.
 
 ## Logs and run IDs
 
