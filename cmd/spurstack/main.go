@@ -9,7 +9,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -50,12 +52,24 @@ type jobPayload struct {
 	Repository github.Repository `json:"repository"`
 }
 
+type githubClient interface {
+	GetRepository(ctx context.Context, repoFullName string) (github.Repository, error)
+	EnsureLabels(ctx context.Context, repoFullName string, labels ...github.LabelSpec) error
+	EnsureLabel(ctx context.Context, repoFullName string, label github.LabelSpec) error
+	ListIssues(ctx context.Context, repoFullName, label string) ([]github.Issue, error)
+	AddLabels(ctx context.Context, repoFullName string, issueNumber int, labels ...string) error
+	RemoveLabel(ctx context.Context, repoFullName string, issueNumber int, label string) error
+	CreateIssueComment(ctx context.Context, repoFullName string, issueNumber int, body string) (github.IssueComment, error)
+}
+
 type manager struct {
-	workspace string
-	label     string
-	gh        *github.Client
-	mu        sync.Mutex
-	running   map[string]struct{}
+	workspace                 string
+	label                     string
+	gh                        githubClient
+	trustedAuthorAssociations map[string]struct{}
+	startJob                  func(jobPayload) bool
+	mu                        sync.Mutex
+	running                   map[string]struct{}
 }
 
 func main() {
@@ -76,9 +90,21 @@ func main() {
 		return
 	}
 
-	m := &manager{workspace: cfg.WorkspaceDir, label: cfg.AgentLabel, gh: github.NewClient(cfg.GitHubToken), running: map[string]struct{}{}}
+	m := newManager(cfg.WorkspaceDir, cfg.AgentLabel, github.NewClient(cfg.GitHubToken), cfg.TrustedAuthorAssociations)
 	slog.Info("agent poller started", "interval", cfg.PollInterval.String(), "repos", cfg.GitHubRepos)
 	m.pollLoop(context.Background(), cfg.GitHubRepos, cfg.PollInterval)
+}
+
+func newManager(workspace, label string, gh githubClient, trustedAuthorAssociations []string) *manager {
+	m := &manager{
+		workspace:                 workspace,
+		label:                     label,
+		gh:                        gh,
+		trustedAuthorAssociations: trustedAssociationSet(trustedAuthorAssociations),
+		running:                   map[string]struct{}{},
+	}
+	m.startJob = m.start
+	return m
 }
 
 func (m *manager) pollLoop(ctx context.Context, repos []string, interval time.Duration) {
@@ -115,9 +141,52 @@ func (m *manager) pollOnce(ctx context.Context, repos []string) {
 				slog.Warn("skipping issue in non-ready agent state", "repo", repo.FullName, "issue", issue.Number, "labels", labelNames(issue))
 				continue
 			}
-			m.start(jobPayload{Issue: issue, Repository: repo})
+			if !m.authorized(issue) {
+				m.skipUnauthorized(ctx, repo.FullName, issue)
+				continue
+			}
+			m.startJob(jobPayload{Issue: issue, Repository: repo})
 		}
 	}
+}
+
+func trustedAssociationSet(associations []string) map[string]struct{} {
+	trusted := map[string]struct{}{}
+	for _, association := range associations {
+		association = strings.ToUpper(strings.TrimSpace(association))
+		if association != "" {
+			trusted[association] = struct{}{}
+		}
+	}
+	return trusted
+}
+
+func (m *manager) authorized(issue github.Issue) bool {
+	_, ok := m.trustedAuthorAssociations[strings.ToUpper(strings.TrimSpace(issue.AuthorAssociation))]
+	return ok
+}
+
+func (m *manager) skipUnauthorized(ctx context.Context, repoFullName string, issue github.Issue) {
+	associations := trustedAssociationNames(m.trustedAuthorAssociations)
+	slog.Warn("skipping issue from untrusted author", "repo", repoFullName, "issue", issue.Number, "author_association", issue.AuthorAssociation, "trusted_author_associations", associations)
+	body := "Spurstack skipped this issue because its author is not trusted to trigger runs. " +
+		"Trusted author associations: " + strings.Join(associations, ", ") + ". " +
+		"Ask a trusted repository owner, member, or collaborator to open the issue or update the trigger."
+	if _, err := m.gh.CreateIssueComment(ctx, repoFullName, issue.Number, body); err != nil {
+		slog.Warn("failed to comment on unauthorized issue", "repo", repoFullName, "issue", issue.Number, "error", err)
+	}
+	if err := m.gh.RemoveLabel(ctx, repoFullName, issue.Number, m.label); err != nil {
+		slog.Warn("failed to remove trigger label from unauthorized issue", "repo", repoFullName, "issue", issue.Number, "label", m.label, "error", err)
+	}
+}
+
+func trustedAssociationNames(trusted map[string]struct{}) []string {
+	names := make([]string, 0, len(trusted))
+	for association := range trusted {
+		names = append(names, association)
+	}
+	sort.Strings(names)
+	return names
 }
 
 func (m *manager) start(job jobPayload) bool {

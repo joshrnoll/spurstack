@@ -9,40 +9,42 @@ import (
 )
 
 type Config struct {
-	GitHubToken              string
-	GitHubRepos              []string
-	OpenAIAPIKey             string
-	OpenAIBaseURL            string
-	SpurModel                string
-	WranglerModel            string
-	OpenRouterProviderOrder  []string
-	OpenRouterAllowFallbacks bool
-	WorkspaceDir             string
-	AgentLabel               string
-	MaxAgentSteps            int
-	MaxWranglerCycles        int
-	GitAuthorName            string
-	GitAuthorEmail           string
-	PollInterval             time.Duration
+	GitHubToken               string
+	GitHubRepos               []string
+	OpenAIAPIKey              string
+	OpenAIBaseURL             string
+	SpurModel                 string
+	WranglerModel             string
+	OpenRouterProviderOrder   []string
+	OpenRouterAllowFallbacks  bool
+	WorkspaceDir              string
+	AgentLabel                string
+	MaxAgentSteps             int
+	MaxWranglerCycles         int
+	GitAuthorName             string
+	GitAuthorEmail            string
+	PollInterval              time.Duration
+	TrustedAuthorAssociations []string
 }
 
 func Load() (Config, error) {
 	cfg := Config{
-		GitHubToken:              os.Getenv("GITHUB_TOKEN"),
-		GitHubRepos:              splitCSV(os.Getenv("GITHUB_REPOSITORIES")),
-		OpenAIAPIKey:             os.Getenv("OPENAI_API_KEY"),
-		OpenAIBaseURL:            getenv("OPENAI_BASE_URL", "https://openrouter.ai/api/v1"),
-		SpurModel:                getenv("SPUR_MODEL", "anthropic/claude-sonnet-4.6"),
-		WranglerModel:            os.Getenv("WRANGLER_MODEL"),
-		OpenRouterProviderOrder:  splitCSV(os.Getenv("OPENROUTER_PROVIDER_ORDER")),
-		OpenRouterAllowFallbacks: getenvBool("OPENROUTER_ALLOW_FALLBACKS", true),
-		WorkspaceDir:             getenv("WORKSPACE_DIR", "/var/lib/spurstack/workspace"),
-		AgentLabel:               getenv("SPUR_LABEL", "agent-ready"),
-		MaxAgentSteps:            getenvInt("MAX_SPUR_STEPS", 30),
-		MaxWranglerCycles:        getenvIntMin("MAX_WRANGLER_CYCLES", 3, 1),
-		GitAuthorName:            getenv("GIT_AUTHOR_NAME", "Spurstack"),
-		GitAuthorEmail:           getenv("GIT_AUTHOR_EMAIL", "spurstack@example.local"),
-		PollInterval:             getenvDuration("POLL_INTERVAL", 60*time.Second),
+		GitHubToken:               os.Getenv("GITHUB_TOKEN"),
+		GitHubRepos:               splitCSV(os.Getenv("GITHUB_REPOSITORIES")),
+		OpenAIAPIKey:              os.Getenv("OPENAI_API_KEY"),
+		OpenAIBaseURL:             getenv("OPENAI_BASE_URL", "https://openrouter.ai/api/v1"),
+		SpurModel:                 getenv("SPUR_MODEL", "anthropic/claude-sonnet-4.6"),
+		WranglerModel:             os.Getenv("WRANGLER_MODEL"),
+		OpenRouterProviderOrder:   splitCSV(os.Getenv("OPENROUTER_PROVIDER_ORDER")),
+		OpenRouterAllowFallbacks:  getenvBool("OPENROUTER_ALLOW_FALLBACKS", true),
+		WorkspaceDir:              getenv("WORKSPACE_DIR", "/var/lib/spurstack/workspace"),
+		AgentLabel:                getenv("SPUR_LABEL", "agent-ready"),
+		MaxAgentSteps:             getenvInt("MAX_SPUR_STEPS", 30),
+		MaxWranglerCycles:         getenvIntMin("MAX_WRANGLER_CYCLES", 3, 1),
+		GitAuthorName:             getenv("GIT_AUTHOR_NAME", "Spurstack"),
+		GitAuthorEmail:            getenv("GIT_AUTHOR_EMAIL", "spurstack@example.local"),
+		PollInterval:              getenvDuration("POLL_INTERVAL", 60*time.Second),
+		TrustedAuthorAssociations: splitCSV(getenv("TRUSTED_AUTHOR_ASSOCIATIONS", "OWNER,MEMBER,COLLABORATOR")),
 	}
 	if cfg.GitHubToken == "" {
 		return cfg, fmt.Errorf("GITHUB_TOKEN is required")

@@ -25,6 +25,21 @@ func TestLoadUsesSpurAndWranglerModels(t *testing.T) {
 	}
 }
 
+func TestLoadTrustedAuthorAssociations(t *testing.T) {
+	t.Setenv("GITHUB_TOKEN", "token")
+	t.Setenv("GITHUB_REPOSITORIES", "owner/repo")
+	t.Setenv("OPENAI_API_KEY", "key")
+	t.Setenv("TRUSTED_AUTHOR_ASSOCIATIONS", "OWNER, MEMBER")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.TrustedAuthorAssociations) != 2 || cfg.TrustedAuthorAssociations[0] != "OWNER" || cfg.TrustedAuthorAssociations[1] != "MEMBER" {
+		t.Fatalf("TrustedAuthorAssociations = %#v", cfg.TrustedAuthorAssociations)
+	}
+}
+
 func TestLoadDoesNotUseOldModelAlias(t *testing.T) {
 	t.Setenv("GITHUB_TOKEN", "token")
 	t.Setenv("GITHUB_REPOSITORIES", "owner/repo")
