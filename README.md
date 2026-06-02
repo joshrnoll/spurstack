@@ -12,7 +12,7 @@ For each matching issue, Spurstack:
 
 1. Claims the issue by adding `agent-running` and removing `agent-ready`.
 2. Skips issues that also have `agent-running` or `agent-pr-opened`.
-3. Clones or updates the repository cache.
+3. Clones or updates the repository cache using plain remote URLs and non-persistent GitHub token authentication.
 4. Creates a dedicated git worktree and branch.
 5. Asks an OpenAI-compatible model for an implementation plan.
 6. Lets the spur read/edit/write files in the worktree.
@@ -57,6 +57,14 @@ Environment variables:
 ## GitHub setup
 
 No webhook is needed.
+
+## Git credential safety
+
+Spurstack uses `GITHUB_TOKEN` for GitHub API requests and for authenticated `git clone`, `git fetch`, and `git push` operations. Git remotes are always stored as plain URLs such as `https://github.com/owner/repo.git`; the token is provided to Git out-of-band for each command and is not written to `remote.origin.url`.
+
+On startup of a repository run, Spurstack also checks existing cached clones under `WORKSPACE_DIR/repos`. If a previous version stored an `https://x-access-token:<token>@...` origin URL, Spurstack rewrites that remote to the plain GitHub URL before fetching or pushing. Git command errors redact tokenized URLs before they are returned to logs.
+
+Operators should still treat `GITHUB_TOKEN` as sensitive process configuration: keep `.env` files private, avoid enabling Git trace/debug environment variables in production, and rotate any token that may have been persisted by older Spurstack versions.
 
 Spurstack automatically creates these labels in each watched repo if they do not already exist:
 
