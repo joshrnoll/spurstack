@@ -72,6 +72,10 @@ type PullRequest struct {
 	Number  int    `json:"number"`
 }
 
+type IssueComment struct {
+	HTMLURL string `json:"html_url"`
+}
+
 func (c *Client) AuthedCloneURL(cloneURL string) string {
 	return strings.Replace(cloneURL, "https://", "https://x-access-token:"+c.token+"@", 1)
 }
@@ -149,6 +153,24 @@ func (c *Client) CreatePullRequest(ctx context.Context, repoFullName string, req
 		return pr, err
 	}
 	return pr, nil
+}
+
+func (c *Client) ListPullRequests(ctx context.Context, repoFullName, head, base string) ([]PullRequest, error) {
+	var prs []PullRequest
+	u := fmt.Sprintf("https://api.github.com/repos/%s/pulls?state=open&head=%s&base=%s&per_page=100", repoFullName, url.QueryEscape(head), url.QueryEscape(base))
+	if err := c.request(ctx, "GET", u, nil, &prs); err != nil {
+		return nil, err
+	}
+	return prs, nil
+}
+
+func (c *Client) CreateIssueComment(ctx context.Context, repoFullName string, issueNumber int, body string) (IssueComment, error) {
+	var comment IssueComment
+	b, _ := json.Marshal(map[string]string{"body": body})
+	if err := c.request(ctx, "POST", fmt.Sprintf("https://api.github.com/repos/%s/issues/%d/comments", repoFullName, issueNumber), b, &comment); err != nil {
+		return comment, err
+	}
+	return comment, nil
 }
 
 func (c *Client) request(ctx context.Context, method, url string, body []byte, out any) error {

@@ -77,6 +77,54 @@ func TestEnsureLabelIgnoresCreateRace(t *testing.T) {
 	}
 }
 
+func TestListPullRequestsFiltersByHeadAndBase(t *testing.T) {
+	client := &Client{token: "token", http: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if req.Method != "GET" {
+			t.Fatalf("unexpected method: %s", req.Method)
+		}
+		if req.URL.Path != "/repos/owner/repo/pulls" {
+			t.Fatalf("unexpected path: %s", req.URL.Path)
+		}
+		query := req.URL.Query()
+		if query.Get("state") != "open" || query.Get("head") != "owner:agent/issue-1" || query.Get("base") != "main" {
+			t.Fatalf("unexpected query: %s", req.URL.RawQuery)
+		}
+		return response(http.StatusOK, `[{"html_url":"https://github.com/owner/repo/pull/1","number":1}]`), nil
+	})}}
+
+	prs, err := client.ListPullRequests(context.Background(), "owner/repo", "owner:agent/issue-1", "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(prs) != 1 || prs[0].HTMLURL != "https://github.com/owner/repo/pull/1" {
+		t.Fatalf("prs = %#v", prs)
+	}
+}
+
+func TestCreateIssueComment(t *testing.T) {
+	client := &Client{token: "token", http: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if req.Method != "POST" {
+			t.Fatalf("unexpected method: %s", req.Method)
+		}
+		if req.URL.Path != "/repos/owner/repo/issues/7/comments" {
+			t.Fatalf("unexpected path: %s", req.URL.Path)
+		}
+		body, _ := io.ReadAll(req.Body)
+		if !strings.Contains(string(body), `"body":"PR already open for this issue: https://github.com/owner/repo/pull/1"`) {
+			t.Fatalf("unexpected body: %s", string(body))
+		}
+		return response(http.StatusCreated, `{"html_url":"https://github.com/owner/repo/issues/7#issuecomment-1"}`), nil
+	})}}
+
+	comment, err := client.CreateIssueComment(context.Background(), "owner/repo", 7, "PR already open for this issue: https://github.com/owner/repo/pull/1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if comment.HTMLURL == "" {
+		t.Fatal("expected comment url")
+	}
+}
+
 func response(status int, body string) *http.Response {
 	return &http.Response{StatusCode: status, Status: http.StatusText(status), Body: io.NopCloser(strings.NewReader(body)), Header: http.Header{}}
 }
