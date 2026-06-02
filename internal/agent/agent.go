@@ -107,6 +107,7 @@ func (r *Runner) Run(ctx context.Context, job Job) error {
 	if prBody == "" {
 		prBody = fmt.Sprintf("Addresses #%d.\n\nPlan:\n%s", job.Issue.Number, plan)
 	}
+	prBody = appendClosingReference(prBody, job.Issue.Number)
 	prBody = appendWranglerComments(prBody, outcome)
 	prBody = appendRunID(prBody, job.RunID)
 	pr, err := r.GitHub.CreatePullRequest(ctx, job.Repo.FullName, github.CreatePREquest{Title: prTitle, Head: branch, Base: job.Repo.DefaultBranch, Body: prBody, Draft: false})
@@ -151,6 +152,10 @@ func cleanupWorktree(ctx context.Context, log *slog.Logger, r *Runner, job Job) 
 	} else {
 		log.Info("cleaned up worktree")
 	}
+}
+
+func appendClosingReference(body string, issueNumber int) string {
+	return strings.TrimRight(body, "\n") + fmt.Sprintf("\n\n## Closes #%d\n", issueNumber)
 }
 
 func appendRunID(body, runID string) string {

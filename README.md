@@ -20,7 +20,7 @@ For each matching issue, Spurstack:
 8. Commits any remaining uncommitted changes with a Conventional Commit message.
 9. Optionally runs a **wrangler** review cycle when `WRANGLER_MODEL` is configured.
 10. Pushes the branch and opens a GitHub pull request.
-11. Adds wrangler comments, when available, and the unique spur run ID to the PR body.
+11. Adds a `## Closes #<issue>` footer, wrangler comments when available, and the unique spur run ID to the PR body.
 12. Replaces `agent-running` with `agent-pr-opened` on success, or `agent-failed` on failure.
 
 The default LLM target is OpenRouter, but any OpenAI-compatible chat completions endpoint can be used. No inbound internet access is required; Spurstack only makes outbound HTTPS calls to GitHub and the model provider.

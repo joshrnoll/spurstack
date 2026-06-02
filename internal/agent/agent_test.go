@@ -2,6 +2,14 @@ package agent
 
 import "testing"
 
+func TestAppendClosingReference(t *testing.T) {
+	got := appendClosingReference("Summary\n", 12)
+	want := "Summary\n\n## Closes #12\n"
+	if got != want {
+		t.Fatalf("unexpected body\nwant: %q\n got: %q", want, got)
+	}
+}
+
 func TestAppendWranglerCommentsSkippedWhenNotRun(t *testing.T) {
 	body := "## Summary\nChanged things."
 	got := appendWranglerComments(body, wranglerOutcome{})
