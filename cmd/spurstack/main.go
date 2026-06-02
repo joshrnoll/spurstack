@@ -26,6 +26,24 @@ const (
 	failedLabel   = "agent-failed"
 )
 
+func agentLabelSpecs(readyLabel string) []github.LabelSpec {
+	return []github.LabelSpec{
+		{Name: readyLabel, Color: "2da44e", Description: "Spurstack should pick up this issue."},
+		{Name: runningLabel, Color: "fbca04", Description: "Spurstack is currently working on this issue."},
+		{Name: prOpenedLabel, Color: "5319e7", Description: "Spurstack opened a pull request for this issue."},
+		{Name: failedLabel, Color: "d73a4a", Description: "Spurstack failed while working on this issue."},
+	}
+}
+
+func agentLabelSpec(readyLabel, name string) github.LabelSpec {
+	for _, spec := range agentLabelSpecs(readyLabel) {
+		if spec.Name == name {
+			return spec
+		}
+	}
+	return github.LabelSpec{Name: name, Color: "ededed", Description: "Spurstack label."}
+}
+
 type jobPayload struct {
 	RunID      string            `json:"run_id"`
 	Issue      github.Issue      `json:"issue"`
@@ -83,6 +101,10 @@ func (m *manager) pollOnce(ctx context.Context, repos []string) {
 			slog.Error("failed to fetch repository", "repo", repoName, "error", err)
 			continue
 		}
+		if err := m.gh.EnsureLabels(ctx, repo.FullName, agentLabelSpecs(m.label)...); err != nil {
+			slog.Error("failed to ensure agent labels", "repo", repo.FullName, "error", err)
+			continue
+		}
 		issues, err := m.gh.ListIssues(ctx, repo.FullName, m.label)
 		if err != nil {
 			slog.Error("failed to list issues", "repo", repo.FullName, "label", m.label, "error", err)
@@ -112,6 +134,11 @@ func (m *manager) start(job jobPayload) bool {
 	m.mu.Unlock()
 
 	ctx := context.Background()
+	if err := m.gh.EnsureLabel(ctx, job.Repository.FullName, agentLabelSpec(m.label, runningLabel)); err != nil {
+		slog.Error("failed to ensure running label", "repo", job.Repository.FullName, "issue", job.Issue.Number, "run_id", job.RunID, "error", err)
+		m.clear(key)
+		return false
+	}
 	if err := m.gh.AddLabels(ctx, job.Repository.FullName, job.Issue.Number, runningLabel); err != nil {
 		slog.Error("failed to add running label", "repo", job.Repository.FullName, "issue", job.Issue.Number, "run_id", job.RunID, "error", err)
 		m.clear(key)
@@ -211,6 +238,9 @@ func runJob(cfg config.Config, path string) error {
 		return err
 	}
 	gh := github.NewClient(cfg.GitHubToken)
+	if err := gh.EnsureLabels(context.Background(), job.Repository.FullName, agentLabelSpecs(cfg.AgentLabel)...); err != nil {
+		return err
+	}
 	var wrangler *llm.Client
 	if cfg.WranglerModel != "" {
 		wrangler = llm.NewWithProvider(cfg.OpenAIAPIKey, cfg.OpenAIBaseURL, cfg.WranglerModel, cfg.OpenRouterProviderOrder, cfg.OpenRouterAllowFallbacks)
@@ -230,9 +260,11 @@ func runJob(cfg config.Config, path string) error {
 	err = r.Run(context.Background(), agent.Job{Issue: job.Issue, Repo: job.Repository, RunID: job.RunID})
 	_ = gh.RemoveLabel(context.Background(), job.Repository.FullName, job.Issue.Number, runningLabel)
 	if err != nil {
+		_ = gh.EnsureLabel(context.Background(), job.Repository.FullName, agentLabelSpec(cfg.AgentLabel, failedLabel))
 		_ = gh.AddLabels(context.Background(), job.Repository.FullName, job.Issue.Number, failedLabel)
 		return err
 	}
+	_ = gh.EnsureLabel(context.Background(), job.Repository.FullName, agentLabelSpec(cfg.AgentLabel, prOpenedLabel))
 	_ = gh.AddLabels(context.Background(), job.Repository.FullName, job.Issue.Number, prOpenedLabel)
 	return nil
 }
