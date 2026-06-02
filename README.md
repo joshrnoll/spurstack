@@ -58,7 +58,7 @@ Environment variables:
 
 No webhook is needed.
 
-Create these labels in each watched repo, or let GitHub create them when the token first applies them:
+Spurstack automatically creates these labels in each watched repo if they do not already exist:
 
 ```text
 agent-ready

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -13,6 +14,24 @@ import (
 type Client struct {
 	token string
 	http  *http.Client
+}
+
+type Error struct {
+	Method     string
+	URL        string
+	Status     string
+	StatusCode int
+	Body       string
+}
+
+func (e Error) Error() string {
+	return fmt.Sprintf("github %s %s failed: %s: %s", e.Method, e.URL, e.Status, e.Body)
+}
+
+type LabelSpec struct {
+	Name        string
+	Color       string
+	Description string
 }
 
 func NewClient(token string) *Client {
@@ -85,6 +104,40 @@ func (c *Client) AddLabels(ctx context.Context, repoFullName string, issueNumber
 	return c.request(ctx, "POST", fmt.Sprintf("https://api.github.com/repos/%s/issues/%d/labels", repoFullName, issueNumber), b, nil)
 }
 
+func (c *Client) EnsureLabels(ctx context.Context, repoFullName string, labels ...LabelSpec) error {
+	for _, label := range labels {
+		if err := c.EnsureLabel(ctx, repoFullName, label); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (c *Client) EnsureLabel(ctx context.Context, repoFullName string, label LabelSpec) error {
+	name := strings.TrimSpace(label.Name)
+	if name == "" {
+		return fmt.Errorf("label name is required")
+	}
+	url := fmt.Sprintf("https://api.github.com/repos/%s/labels/%s", repoFullName, url.PathEscape(name))
+	if err := c.request(ctx, "GET", url, nil, nil); err == nil {
+		return nil
+	} else {
+		var ghErr Error
+		if !errors.As(err, &ghErr) || ghErr.StatusCode != http.StatusNotFound {
+			return err
+		}
+	}
+	body, _ := json.Marshal(map[string]string{"name": name, "color": label.Color, "description": label.Description})
+	if err := c.request(ctx, "POST", fmt.Sprintf("https://api.github.com/repos/%s/labels", repoFullName), body, nil); err != nil {
+		var ghErr Error
+		if errors.As(err, &ghErr) && ghErr.StatusCode == http.StatusUnprocessableEntity {
+			return nil
+		}
+		return err
+	}
+	return nil
+}
+
 func (c *Client) RemoveLabel(ctx context.Context, repoFullName string, issueNumber int, label string) error {
 	return c.request(ctx, "DELETE", fmt.Sprintf("https://api.github.com/repos/%s/issues/%d/labels/%s", repoFullName, issueNumber, url.PathEscape(label)), nil, nil)
 }
@@ -117,7 +170,7 @@ func (c *Client) request(ctx context.Context, method, url string, body []byte, o
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		var buf bytes.Buffer
 		_, _ = buf.ReadFrom(resp.Body)
-		return fmt.Errorf("github %s %s failed: %s: %s", method, url, resp.Status, buf.String())
+		return Error{Method: method, URL: url, Status: resp.Status, StatusCode: resp.StatusCode, Body: buf.String()}
 	}
 	if out != nil {
 		return json.NewDecoder(resp.Body).Decode(out)
