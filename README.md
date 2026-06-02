@@ -41,7 +41,7 @@ Environment variables:
 | `GITHUB_REPOSITORIES` | yes | | Comma-separated repos to poll, e.g. `owner/repo,owner/other-repo`. |
 | `OPENAI_API_KEY` | yes | | OpenRouter/OpenAI-compatible API key. |
 | `OPENAI_BASE_URL` | no | `https://openrouter.ai/api/v1` | OpenAI-compatible API base URL. |
-| `OPENAI_MODEL` | no | `anthropic/claude-3.5-sonnet` | Model name. |
+| `OPENAI_MODEL` | no | `anthropic/claude-sonnet-4.6` | Model name. |
 | `OPENROUTER_PROVIDER_ORDER` | no | | Comma-separated OpenRouter provider preference, e.g. `DeepInfra`. |
 | `OPENROUTER_ALLOW_FALLBACKS` | no | `true` | Whether OpenRouter may fall back to other providers when `OPENROUTER_PROVIDER_ORDER` is set. |
 | `WORKSPACE_DIR` | no | `/var/lib/spurstack/workspace` | Persistent clone/worktree storage. |
