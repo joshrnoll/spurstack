@@ -150,6 +150,12 @@ Directory patterns end with `/` and match everything below that directory. File 
 
 Legitimate changes to these paths should be made by a human outside Spurstack and reviewed through the normal repository process.
 
+## Model I/O security limits
+
+Spurstack treats GitHub issue titles/bodies, implementation plans, diffs, wrangler comments, and spur-generated PR metadata as untrusted model/input data. Prompts wrap these values in explicit `BEGIN/END UNTRUSTED` delimiters and instruct models not to follow embedded instructions.
+
+This reduces prompt-injection risk but does not make model output trusted. Before opening a PR, Spurstack sanitizes model-generated PR body text and wrangler comments by neutralizing issue-closing keywords such as `Closes #1`, `Fixes owner/repo#2`, and `Resolves #3`, and by breaking `@mentions`. Spurstack then appends its own managed `## Closes #<current-issue>` footer so only the triggering issue is auto-closed.
+
 ## Wranglers
 
 A **wrangler** is an optional reviewing model. Configure `WRANGLER_MODEL` to have Spurstack review the current diff after the spur calls `finish` and before the PR is opened.
