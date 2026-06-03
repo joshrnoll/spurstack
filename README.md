@@ -63,10 +63,6 @@ Environment variables:
 | `GIT_AUTHOR_EMAIL` | no | `spurstack@example.local` | Commit author email. |
 | `TRUSTED_AUTHOR_ASSOCIATIONS` | no | `OWNER,MEMBER,COLLABORATOR` | Comma-separated GitHub issue `author_association` values allowed to trigger runs. |
 
-## GitHub setup
-
-No webhook is needed.
-
 ## Git credential safety
 
 Spurstack uses `GITHUB_TOKEN` for GitHub API requests and for authenticated `git clone`, `git fetch`, and `git push` operations. Git remotes are always stored as plain URLs such as `https://github.com/owner/repo.git`; the token is provided to Git out-of-band for each command and is not written to `remote.origin.url`.
