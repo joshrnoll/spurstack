@@ -1,6 +1,15 @@
 package agent
 
-import "testing"
+import (
+	"context"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"spurstack/internal/gitutil"
+)
 
 func TestAppendClosingReference(t *testing.T) {
 	got := appendClosingReference("Summary\n", 12)
@@ -48,5 +57,120 @@ func TestParseWranglerResultRejectsUnknownStatus(t *testing.T) {
 	_, err := parseWranglerResult(`{"status":"maybe","summary":"hmm"}`)
 	if err == nil {
 		t.Fatal("expected error")
+	}
+}
+
+func TestApplyActionDeniesProtectedWrite(t *testing.T) {
+	wt := t.TempDir()
+	_, _, err := applyAction(context.Background(), wt, gitutil.Git{}, action{Action: "write", Path: ".github/workflows/ci.yml", Content: "name: ci"}, nil)
+	if err == nil {
+		t.Fatal("expected protected path write to fail")
+	}
+	if !strings.Contains(err.Error(), "protected path") {
+		t.Fatalf("expected protected path error, got %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(wt, ".github", "workflows", "ci.yml")); !os.IsNotExist(statErr) {
+		t.Fatalf("protected file should not be written, stat err: %v", statErr)
+	}
+}
+
+func TestApplyActionDeniesProtectedEdit(t *testing.T) {
+	wt := t.TempDir()
+	path := filepath.Join(wt, "Dockerfile")
+	if err := os.WriteFile(path, []byte("FROM alpine\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err := applyAction(context.Background(), wt, gitutil.Git{}, action{Action: "edit", Path: "Dockerfile", OldText: "alpine", NewText: "debian"}, nil)
+	if err == nil {
+		t.Fatal("expected protected path edit to fail")
+	}
+	got, readErr := os.ReadFile(path)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if string(got) != "FROM alpine\n" {
+		t.Fatalf("protected file changed: %q", got)
+	}
+}
+
+func TestApplyActionAllowsNormalWriteAndEdit(t *testing.T) {
+	wt := t.TempDir()
+	ctx := context.Background()
+	if _, _, err := applyAction(ctx, wt, gitutil.Git{}, action{Action: "write", Path: "docs/guide.md", Content: "hello"}, nil); err != nil {
+		t.Fatalf("normal write failed: %v", err)
+	}
+	if _, _, err := applyAction(ctx, wt, gitutil.Git{}, action{Action: "edit", Path: "docs/guide.md", OldText: "hello", NewText: "hello world"}, nil); err != nil {
+		t.Fatalf("normal edit failed: %v", err)
+	}
+	got, err := os.ReadFile(filepath.Join(wt, "docs", "guide.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "hello world" {
+		t.Fatalf("unexpected file content %q", got)
+	}
+}
+
+func TestWritablePathNormalizesBeforeProtectionCheck(t *testing.T) {
+	wt := t.TempDir()
+	_, err := writablePath(wt, "docs/../.github/workflows/ci.yml", nil)
+	if err == nil {
+		t.Fatal("expected normalized protected path to be denied")
+	}
+	if !strings.Contains(err.Error(), ".github/workflows/ci.yml") {
+		t.Fatalf("expected normalized protected path in error, got %v", err)
+	}
+}
+
+func TestWritablePathUsesCustomProtectedPatterns(t *testing.T) {
+	wt := t.TempDir()
+	if _, err := writablePath(wt, "go.mod", []string{"deploy/"}); err != nil {
+		t.Fatalf("custom patterns should replace defaults, got %v", err)
+	}
+	if _, err := writablePath(wt, "deploy/prod.yml", []string{"deploy/"}); err == nil {
+		t.Fatal("expected custom protected directory to be denied")
+	}
+}
+
+func TestApplyActionReadAllowsProtectedPath(t *testing.T) {
+	wt := t.TempDir()
+	path := filepath.Join(wt, "go.mod")
+	if err := os.WriteFile(path, []byte("module test\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	obs, _, err := applyAction(context.Background(), wt, gitutil.Git{}, action{Action: "read", Path: "go.mod"}, nil)
+	if err != nil {
+		t.Fatalf("protected read failed: %v", err)
+	}
+	if obs != "module test\n" {
+		t.Fatalf("unexpected read content %q", obs)
+	}
+}
+
+func TestEnsureNoProtectedChangesBlocksCommitSurface(t *testing.T) {
+	wt := t.TempDir()
+	runGit(t, wt, "init")
+	runGit(t, wt, "config", "user.name", "Test")
+	runGit(t, wt, "config", "user.email", "test@example.com")
+	if err := os.WriteFile(filepath.Join(wt, "README.md"), []byte("ok\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, wt, "add", "README.md")
+	runGit(t, wt, "commit", "-m", "init")
+	if err := os.WriteFile(filepath.Join(wt, "package.json"), []byte("{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureNoProtectedChanges(context.Background(), wt, "", nil); err == nil {
+		t.Fatal("expected protected package manifest change to be blocked")
+	}
+}
+
+func runGit(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %s failed: %v\n%s", strings.Join(args, " "), err, out)
 	}
 }

@@ -71,3 +71,24 @@ func TestMaxWranglerCyclesMinimum(t *testing.T) {
 		t.Fatalf("MaxWranglerCycles = %d, want 1", cfg.MaxWranglerCycles)
 	}
 }
+
+func TestLoadProtectedPaths(t *testing.T) {
+	t.Setenv("GITHUB_TOKEN", "token")
+	t.Setenv("GITHUB_REPOSITORIES", "owner/repo")
+	t.Setenv("OPENAI_API_KEY", "key")
+	t.Setenv("SPUR_PROTECTED_PATHS", ".github/, deploy/, *.lock")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{".github/", "deploy/", "*.lock"}
+	if len(cfg.ProtectedPaths) != len(want) {
+		t.Fatalf("ProtectedPaths = %#v", cfg.ProtectedPaths)
+	}
+	for i := range want {
+		if cfg.ProtectedPaths[i] != want[i] {
+			t.Fatalf("ProtectedPaths = %#v", cfg.ProtectedPaths)
+		}
+	}
+}

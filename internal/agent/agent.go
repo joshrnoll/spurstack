@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 
@@ -24,6 +25,7 @@ type Runner struct {
 	WranglerModel     string
 	MaxSteps          int
 	MaxWranglerCycles int
+	ProtectedPaths    []string
 }
 
 type Job struct {
@@ -85,9 +87,15 @@ func (r *Runner) Run(ctx context.Context, job Job) error {
 		return err
 	}
 	if dirty {
+		if err := ensureNoProtectedChanges(ctx, wt, job.Repo.DefaultBranch, r.ProtectedPaths); err != nil {
+			return err
+		}
 		if _, err := r.Git.CommitAll(ctx, wt, msg); err != nil {
 			return err
 		}
+	}
+	if err := ensureNoProtectedChanges(ctx, wt, job.Repo.DefaultBranch, r.ProtectedPaths); err != nil {
+		return err
 	}
 	changed, err := hasBranchFileChanges(ctx, wt, job.Repo.DefaultBranch)
 	if err != nil {
@@ -197,7 +205,7 @@ Available actions:
 {"action":"edit","path":"relative/file","old_text":"exact text to replace","new_text":"replacement text"}
 {"action":"commit","commit_message":"conventional commit <=72 chars"}
 {"action":"finish","commit_message":"conventional commit <=72 chars","pr_title":"title","pr_body":"summary and testing notes"}
-Rules: inspect files before editing, keep changes minimal, use edit for existing files, use write only for new files or complete rewrites, and do not run shell commands. Use commit to save coherent groups of completed changes during larger work. The app handles final commit of any remaining changes, push, and pull request creation after finish.`
+Rules: inspect files before editing, keep changes minimal, use edit for existing files, use write only for new files or complete rewrites, and do not run shell commands. Protected execution/config paths (for example .github/, CI configs, Dockerfile/Containerfile, package manager manifests/lockfiles) are read-only and cannot be written, edited, or committed. Use commit to save coherent groups of completed changes during larger work. The app handles final commit of any remaining changes, push, and pull request creation after finish.`
 	return []llm.Message{{Role: "system", Content: system}, {Role: "user", Content: fmt.Sprintf("Implement issue #%d: %s\n\nIssue body:\n%s\n\nPlan:\n%s\n\nInitial tree:\n%s", job.Issue.Number, job.Issue.Title, job.Issue.Body, plan, mustTree(wt))}}
 }
 
@@ -255,7 +263,7 @@ func (r *Runner) execute(ctx context.Context, job Job, wt string, messages []llm
 			continue
 		}
 		slog.Info("agent action", "issue", job.Issue.Number, "action", act.Action, "path", act.Path)
-		obs, done, err := applyAction(ctx, wt, r.Git, act)
+		obs, done, err := applyAction(ctx, wt, r.Git, act, r.ProtectedPaths)
 		if err != nil {
 			obs = "ERROR: " + err.Error()
 		}
@@ -341,7 +349,7 @@ func parseWranglerResult(s string) (wranglerResult, error) {
 	return r, nil
 }
 
-func applyAction(ctx context.Context, wt string, git gitutil.Git, a action) (string, bool, error) {
+func applyAction(ctx context.Context, wt string, git gitutil.Git, a action, protectedPatterns []string) (string, bool, error) {
 	switch a.Action {
 	case "read":
 		p, err := safePath(wt, a.Path)
@@ -354,7 +362,7 @@ func applyAction(ctx context.Context, wt string, git gitutil.Git, a action) (str
 		}
 		return string(b), false, nil
 	case "write":
-		p, err := safePath(wt, a.Path)
+		p, err := writablePath(wt, a.Path, protectedPatterns)
 		if err != nil {
 			return "", false, err
 		}
@@ -363,7 +371,7 @@ func applyAction(ctx context.Context, wt string, git gitutil.Git, a action) (str
 		}
 		return "wrote " + a.Path, false, os.WriteFile(p, []byte(a.Content), 0o644)
 	case "edit":
-		p, err := safePath(wt, a.Path)
+		p, err := writablePath(wt, a.Path, protectedPatterns)
 		if err != nil {
 			return "", false, err
 		}
@@ -383,6 +391,9 @@ func applyAction(ctx context.Context, wt string, git gitutil.Git, a action) (str
 	case "commit":
 		if strings.TrimSpace(a.CommitMessage) == "" {
 			return "", false, fmt.Errorf("commit_message is required")
+		}
+		if err := ensureNoProtectedChanges(ctx, wt, "", protectedPatterns); err != nil {
+			return "", false, err
 		}
 		committed, err := git.CommitAll(ctx, wt, a.CommitMessage)
 		if err != nil {
@@ -496,6 +507,125 @@ func safePath(root, rel string) (string, error) {
 		return "", fmt.Errorf("path escapes worktree")
 	}
 	return p, nil
+}
+
+func writablePath(root, rel string, protectedPatterns []string) (string, error) {
+	p, err := safePath(root, rel)
+	if err != nil {
+		return "", err
+	}
+	cleanRel, err := filepath.Rel(root, p)
+	if err != nil {
+		return "", err
+	}
+	if isProtectedPath(cleanRel, protectedPatterns) {
+		return "", fmt.Errorf("protected path %q cannot be written or edited by the agent", filepath.ToSlash(filepath.Clean(cleanRel)))
+	}
+	return p, nil
+}
+
+var defaultProtectedPathPatterns = []string{
+	".git/", ".github/", ".circleci/", ".buildkite/", ".azure-pipelines/", ".teamcity/", "ci/", "scripts/",
+	"Dockerfile", "Dockerfile.*", "Containerfile", "Containerfile.*", "docker-compose.yml", "docker-compose.yaml",
+	"Jenkinsfile", ".gitlab-ci.yml", ".gitlab-ci.yaml", "azure-pipelines.yml", "azure-pipelines.yaml", "bitbucket-pipelines.yml",
+	"package.json", "package-lock.json", "npm-shrinkwrap.json", "yarn.lock", "pnpm-lock.yaml",
+	"go.mod", "go.sum", "Cargo.toml", "Cargo.lock",
+	"pyproject.toml", "poetry.lock", "Pipfile", "Pipfile.lock", "requirements.txt", "requirements*.txt",
+	"Gemfile", "Gemfile.lock", "composer.json", "composer.lock",
+	"pom.xml", "build.gradle", "build.gradle.kts", "gradle.lockfile", "Makefile",
+}
+
+func isProtectedPath(rel string, protectedPatterns []string) bool {
+	clean := filepath.ToSlash(filepath.Clean(rel))
+	if clean == "." || clean == "" || strings.HasPrefix(clean, "../") || strings.HasPrefix(clean, "/") {
+		return false
+	}
+	lower := strings.ToLower(clean)
+	base := strings.ToLower(path.Base(clean))
+	patterns := protectedPatterns
+	if len(patterns) == 0 {
+		patterns = defaultProtectedPathPatterns
+	}
+	for _, pattern := range patterns {
+		pattern = strings.TrimSpace(pattern)
+		if pattern == "" {
+			continue
+		}
+		isDirPattern := strings.HasSuffix(pattern, "/")
+		pattern = strings.ToLower(filepath.ToSlash(filepath.Clean(pattern)))
+		if pattern == "." || pattern == "" {
+			continue
+		}
+		if isDirPattern {
+			dir := strings.TrimSuffix(pattern, "/")
+			if lower == dir || strings.HasPrefix(lower, dir+"/") {
+				return true
+			}
+			continue
+		}
+		if strings.Contains(pattern, "/") {
+			if ok, _ := path.Match(pattern, lower); ok {
+				return true
+			}
+			continue
+		}
+		if ok, _ := path.Match(pattern, base); ok {
+			return true
+		}
+	}
+	return false
+}
+
+func ensureNoProtectedChanges(ctx context.Context, wt, defaultBranch string, protectedPatterns []string) error {
+	paths, err := changedProtectedPaths(ctx, wt, defaultBranch, protectedPatterns)
+	if err != nil {
+		return err
+	}
+	if len(paths) > 0 {
+		return fmt.Errorf("protected path changes are not allowed: %s", strings.Join(paths, ", "))
+	}
+	return nil
+}
+
+func changedProtectedPaths(ctx context.Context, wt, defaultBranch string, protectedPatterns []string) ([]string, error) {
+	var changed []string
+	seen := map[string]bool{}
+	add := func(rel string) {
+		rel = filepath.ToSlash(filepath.Clean(strings.TrimSpace(rel)))
+		if rel == "." || rel == "" || seen[rel] || !isProtectedPath(rel, protectedPatterns) {
+			return
+		}
+		seen[rel] = true
+		changed = append(changed, rel)
+	}
+	if strings.TrimSpace(defaultBranch) != "" {
+		out, err := gitutil.Run(ctx, wt, "git", "diff", "--name-only", "origin/"+defaultBranch+"...HEAD")
+		if err != nil {
+			return nil, err
+		}
+		for _, rel := range strings.Split(out, "\n") {
+			add(rel)
+		}
+	}
+	out, err := gitutil.Run(ctx, wt, "git", "status", "--porcelain")
+	if err != nil {
+		return nil, err
+	}
+	for _, line := range strings.Split(out, "\n") {
+		if len(line) < 4 {
+			continue
+		}
+		path := strings.TrimSpace(line[3:])
+		if strings.Contains(path, " -> ") {
+			parts := strings.Split(path, " -> ")
+			for _, part := range parts {
+				add(part)
+			}
+			continue
+		}
+		add(path)
+	}
+	return changed, nil
 }
 
 func mustTree(wt string) string { t, _ := repoTree(wt, 250); return t }
