@@ -2,6 +2,8 @@ package agent
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -213,7 +215,16 @@ func planPrompt(job Job, wt string) string {
 }
 
 func untrustedBlock(label, content string) string {
-	return fmt.Sprintf("----- BEGIN UNTRUSTED %s -----\n%s\n----- END UNTRUSTED %s -----", strings.ToUpper(label), content, strings.ToUpper(label))
+	marker := untrustedMarker(label)
+	return fmt.Sprintf("----- BEGIN %s -----\n%s\n----- END %s -----", marker, content, marker)
+}
+
+func untrustedMarker(label string) string {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		panic(fmt.Sprintf("generate untrusted block nonce: %v", err))
+	}
+	return fmt.Sprintf("UNTRUSTED %s NONCE %s", strings.ToUpper(label), hex.EncodeToString(b[:]))
 }
 
 func spurMessages(job Job, wt, plan string) []llm.Message {
