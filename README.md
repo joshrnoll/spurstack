@@ -154,7 +154,7 @@ Legitimate changes to these paths should be made by a human outside Spurstack an
 
 ## Model I/O security limits
 
-Spurstack treats GitHub issue titles/bodies, implementation plans, diffs, wrangler comments, and spur-generated PR metadata as untrusted model/input data. Prompts wrap these values in explicit `BEGIN/END UNTRUSTED` delimiters and instruct models not to follow embedded instructions.
+Spurstack treats GitHub issue titles/bodies, implementation plans, diffs, wrangler comments, and spur-generated PR metadata as untrusted model/input data. Prompts wrap these values in explicit `BEGIN/END UNTRUSTED` delimiters with random per-block nonces and instruct models not to follow embedded instructions.
 
 This reduces prompt-injection risk but does not make model output trusted. Before opening a PR, Spurstack sanitizes model-generated PR body text and wrangler comments by neutralizing issue-closing keywords such as `Closes #1`, `Fixes owner/repo#2`, and `Resolves #3`, and by breaking `@mentions`. Spurstack then appends its own managed `## Closes #<current-issue>` footer so only the triggering issue is auto-closed.
 
