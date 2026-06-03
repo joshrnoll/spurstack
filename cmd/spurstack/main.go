@@ -90,7 +90,7 @@ func main() {
 		return
 	}
 
-	m := newManager(cfg.WorkspaceDir, cfg.AgentLabel, github.NewClient(cfg.GitHubToken), cfg.TrustedAuthorAssociations)
+	m := newManager(cfg.WorkspaceDir, cfg.AgentLabel, github.NewClientWithLimits(cfg.GitHubToken, cfg.GitHubTimeout, cfg.GitHubMaxErrorBodyBytes), cfg.TrustedAuthorAssociations)
 	slog.Info("agent poller started", "interval", cfg.PollInterval.String(), "repos", cfg.GitHubRepos)
 	m.pollLoop(context.Background(), cfg.GitHubRepos, cfg.PollInterval)
 }
@@ -306,18 +306,18 @@ func runJob(cfg config.Config, path string) error {
 	if err := json.Unmarshal(b, &job); err != nil {
 		return err
 	}
-	gh := github.NewClient(cfg.GitHubToken)
+	gh := github.NewClientWithLimits(cfg.GitHubToken, cfg.GitHubTimeout, cfg.GitHubMaxErrorBodyBytes)
 	if err := gh.EnsureLabels(context.Background(), job.Repository.FullName, agentLabelSpecs(cfg.AgentLabel)...); err != nil {
 		return err
 	}
 	var wrangler *llm.Client
 	if cfg.WranglerModel != "" {
-		wrangler = llm.NewWithProvider(cfg.OpenAIAPIKey, cfg.OpenAIBaseURL, cfg.WranglerModel, cfg.OpenRouterProviderOrder, cfg.OpenRouterAllowFallbacks)
+		wrangler = llm.NewWithProviderAndLimits(cfg.OpenAIAPIKey, cfg.OpenAIBaseURL, cfg.WranglerModel, cfg.OpenRouterProviderOrder, cfg.OpenRouterAllowFallbacks, cfg.LLMTimeout, cfg.LLMMaxResponseBytes)
 	}
 	r := &agent.Runner{
 		GitHub:            gh,
 		Git:               gitutil.Git{Workspace: cfg.WorkspaceDir, AuthorName: cfg.GitAuthorName, AuthorEmail: cfg.GitAuthorEmail, GitHubToken: cfg.GitHubToken},
-		LLM:               llm.NewWithProvider(cfg.OpenAIAPIKey, cfg.OpenAIBaseURL, cfg.SpurModel, cfg.OpenRouterProviderOrder, cfg.OpenRouterAllowFallbacks),
+		LLM:               llm.NewWithProviderAndLimits(cfg.OpenAIAPIKey, cfg.OpenAIBaseURL, cfg.SpurModel, cfg.OpenRouterProviderOrder, cfg.OpenRouterAllowFallbacks, cfg.LLMTimeout, cfg.LLMMaxResponseBytes),
 		Wrangler:          wrangler,
 		WranglerModel:     cfg.WranglerModel,
 		MaxSteps:          cfg.MaxAgentSteps,

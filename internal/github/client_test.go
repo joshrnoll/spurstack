@@ -2,16 +2,58 @@ package github
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 )
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 	return f(req)
+}
+
+func TestNewClientUsesTimeoutAndErrorBodyLimitDefaults(t *testing.T) {
+	client := NewClient("token")
+
+	if client.http.Timeout != DefaultTimeout {
+		t.Fatalf("http timeout = %s, want %s", client.http.Timeout, DefaultTimeout)
+	}
+	if client.maxErrorBodyBytes != DefaultMaxErrorBodyBytes {
+		t.Fatalf("maxErrorBodyBytes = %d, want %d", client.maxErrorBodyBytes, DefaultMaxErrorBodyBytes)
+	}
+}
+
+func TestRequestUsesClientTimeout(t *testing.T) {
+	client := NewClientWithLimits("token", time.Nanosecond, DefaultMaxErrorBodyBytes)
+	client.http.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		<-req.Context().Done()
+		return nil, req.Context().Err()
+	})
+
+	_, err := client.GetRepository(context.Background(), "owner/repo")
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("err = %v, want deadline exceeded", err)
+	}
+}
+
+func TestErrorBodyIsCapped(t *testing.T) {
+	client := NewClientWithLimits("token", DefaultTimeout, 8)
+	client.http.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return response(http.StatusInternalServerError, "0123456789abcdef"), nil
+	})
+
+	_, err := client.GetRepository(context.Background(), "owner/repo")
+	var ghErr Error
+	if !errors.As(err, &ghErr) {
+		t.Fatalf("err = %v, want github Error", err)
+	}
+	if ghErr.Body != "01234567" {
+		t.Fatalf("body = %q", ghErr.Body)
+	}
 }
 
 func TestEnsureLabelCreatesMissingLabel(t *testing.T) {

@@ -6,14 +6,22 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
+)
+
+const (
+	DefaultTimeout           = 60 * time.Second
+	DefaultMaxErrorBodyBytes = 64 * 1024
 )
 
 type Client struct {
-	token string
-	http  *http.Client
+	token             string
+	http              *http.Client
+	maxErrorBodyBytes int64
 }
 
 type Error struct {
@@ -35,7 +43,14 @@ type LabelSpec struct {
 }
 
 func NewClient(token string) *Client {
-	return &Client{token: token, http: http.DefaultClient}
+	return NewClientWithLimits(token, DefaultTimeout, DefaultMaxErrorBodyBytes)
+}
+
+func NewClientWithLimits(token string, timeout time.Duration, maxErrorBodyBytes int64) *Client {
+	if maxErrorBodyBytes <= 0 {
+		maxErrorBodyBytes = DefaultMaxErrorBodyBytes
+	}
+	return &Client{token: token, http: &http.Client{Timeout: timeout}, maxErrorBodyBytes: maxErrorBodyBytes}
 }
 
 type Issue struct {
@@ -188,7 +203,7 @@ func (c *Client) request(ctx context.Context, method, url string, body []byte, o
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		var buf bytes.Buffer
-		_, _ = buf.ReadFrom(resp.Body)
+		_, _ = buf.ReadFrom(io.LimitReader(resp.Body, c.maxErrorBodyBytes))
 		return Error{Method: method, URL: url, Status: resp.Status, StatusCode: resp.StatusCode, Body: buf.String()}
 	}
 	if out != nil {
